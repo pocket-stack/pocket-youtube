@@ -2,6 +2,10 @@
 
 YouTube on a 2004 Sony PSP, where **the network is a USB cable**.
 
+[<img src="https://pocketjs.dev/assets/blog/pocket-youtube-journey.gif" width="480" alt="One search-to-playback journey on a real PSP — click for the hand-held video with sound" />](https://pub-ddde9ba138d04a9a9f922aa1fda6f855.r2.dev/pocketjs/pocket-youtube-real-psp-7ae0b36c.mp4)
+
+▶ **[Watch it running on a real PSP (video, 75 s, sound on)](https://pub-ddde9ba138d04a9a9f922aa1fda6f855.r2.dev/pocketjs/pocket-youtube-real-psp-7ae0b36c.mp4)**
+
 The PSP's 802.11b radio cannot reach the modern web, so the app splits at the
 network boundary: a Mac companion process owns DNS, TLS, yt-dlp and H.264,
 and the handheld — running [PocketJS](https://github.com/pocket-stack/pocketjs) —
@@ -13,8 +17,6 @@ The full engineering story — the `.pkst` ring container you can `ls`, the
 per-frame palette quantization, the GPU race that only real silicon could
 show — is on the blog: [Pocket YouTube: Streaming YouTube to a PSP over a
 USB Cable](https://pocketjs.dev/blog/pocket-youtube/).
-
-<img src="https://pocketjs.dev/assets/blog/pocket-youtube-journey.gif" width="480" alt="One search-to-playback journey on a real PSP" />
 
 ## How it works
 
