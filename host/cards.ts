@@ -211,9 +211,12 @@ export function fmtDuration(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+/** YouTube-style compact counts: 844 · 8.4K · 84K · 2.5M · 1.2B. */
 export function fmtViews(n: number): string {
-  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
+  const unit = (v: number, s: string) => `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10}${s}`;
+  if (n >= 1e9) return unit(n / 1e9, "B");
+  if (n >= 1e6) return unit(n / 1e6, "M");
+  if (n >= 1e3) return unit(n / 1e3, "K");
   return `${n}`;
 }
 
@@ -280,7 +283,7 @@ export async function renderCard(input: CardInput): Promise<Uint8Array> {
   const tx = THUMB_W + 10;
   const maxW = CARD_VISIBLE_W - tx - 26; // keep clear of the chevron
   const lines = fitLines(input.title, 14, maxW, 2);
-  const views = input.views > 0 ? `${fmtViews(input.views)}次观看` : "";
+  const views = input.views > 0 ? `${fmtViews(input.views)} views` : "";
   if (lines.length > 1) {
     // Two title lines: channel and views share the meta line.
     drawText(rgba, CARD_W, CARD_H, lines[0], tx, 19, 14, INK);
