@@ -1,0 +1,11 @@
+node_modules/
+.pocket/
+dist/*.js
+dist/*.pak
+dist/EBOOT.PBP
+dist/vita/
+target/
+*.fig
+.DS_Store
+test/goldens-vita/*.actual.png
+out/

@@ -1,0 +1,24 @@
+# pocket-youtube-psp — Pocket YouTube on a real Sony PSP.
+#
+# STANDALONE LONE-BIN CRATE (outside any workspace; cargo-psp requirement,
+# same as vendor/pocketjs/native). Build via `bun run psp` at the repo root.
+#
+# Pure 2D composition: the pocketjs-psp host LIBRARY provides everything —
+# the arena allocator trio, QuickJS embedding, the `ui` HostOps surface
+# (incl. the loadTileTexture/freeTexture streaming ops DeepZoom drives), the
+# DrawList GE backend, the pak feeder and the DevTools mailbox. This crate is
+# only the stock boot + 2D frame loop (src/main.rs) with the built app
+# bundle baked in (build.rs).
+#
+# PocketJS and this host share exact organization-owned rust-psp / QuickJS
+# revisions, so Cargo resolves one copy of each runtime crate.
+
+[package]
+name = "pocket-youtube-psp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+psp = { git = "https://github.com/pocket-stack/rust-psp.git", rev = "2cbaf8c9bc72569c76240a1d9743de10731e5f6b", features = ["external-c-heap", "abort-only", "external-global-alloc"] }
+libquickjs-sys = { git = "https://github.com/pocket-stack/quickjs-rs.git", rev = "0fc946fb670c0c29bc0135f510bcb0f595415a61" }
+pocketjs-psp = { path = "../../vendor/pocketjs/native" }
