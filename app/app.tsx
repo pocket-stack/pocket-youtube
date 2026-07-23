@@ -10,14 +10,21 @@
 // it, and while it is up every handler below is muted by the framework's
 // modal block — no per-handler gating, no way to freeze the app behind an
 // invisible keyboard. START/✓ commits the search.
+//
+// The results column is the framework VirtualList: one component, layered
+// input — touch pan/fling + tap-to-play where the host delivers contacts
+// (Vita), the d-pad focus walk everywhere (PSP unchanged), hover-focus
+// under the virtual cursor. Only the visible slice mounts, so a long
+// search history no longer materializes one texture per row up front.
 
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import { createSpriteAnimation, onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
-import { animate } from "@pocketjs/framework/animation";
 import { createOsk, Osk } from "@pocketjs/framework/osk";
+import { hasFeature, platform } from "@pocketjs/framework/platform";
+import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import { loadCard, pumpDriver } from "./driver.ts";
 import Player from "./player.tsx";
@@ -84,35 +91,34 @@ function Browse(props: { store: YoutubeStore }) {
     onCommit: () => props.store.search(),
   });
 
-  // Rows the d-pad can reach: real results plus the LOAD MORE sentinel.
+  // Rows the list serves: real results plus the LOAD MORE sentinel.
   const rowCount = () => props.store.results().length + (props.store.hasMore() ? 1 : 0);
+  const [list, setList] = createSignal<VirtualListHandle | null>(null);
+  const focusedRow = () => list()?.focusedIndex() ?? 0;
+  // Opening the OSK squeezes the list viewport, never the OSK.
+  const listH = () => (osk.isOpen() ? VIEW_H - 92 : VIEW_H);
 
-  // While the OSK is open these are all muted by its modal block — the
-  // keyboard owns every button until it closes.
+  // While the OSK is open these are muted by its modal block — the keyboard
+  // owns every button until it closes. The d-pad row walk and ○-to-play now
+  // ride the framework focus manager through the VirtualList's rows.
   onButtonPress(BTN.TRIANGLE, () => osk.open());
   onButtonPress(BTN.START, () => props.store.search());
-  onButtonPress(BTN.UP, () => props.store.setFocused(Math.max(0, props.store.focused() - 1)));
-  onButtonPress(BTN.DOWN, () =>
-    props.store.setFocused(Math.min(Math.max(0, rowCount() - 1), props.store.focused() + 1)),
-  );
-  onButtonPress(BTN.CIRCLE, () => {
-    const item = props.store.results()[props.store.focused()];
-    if (item) props.store.play(item);
-    else if (props.store.hasMore()) props.store.loadMore(); // the sentinel row
+
+  // A fresh search replaces the list: focus row 0 (the same entry point the
+  // d-pad walk uses) so ○ plays the first result immediately — the pre-list
+  // UX, preserved.
+  createEffect(() => {
+    props.store.searchSerial();
+    // Depend on the handle too: the delivery that brings the first results
+    // also MOUNTS the list — the ref lands after this effect's first run.
+    list()?.focusRow(0);
   });
 
-  // The whole result list lives under a clipping viewport and SCROLLS
-  // (animated translateY: focused row rides the second slot, clamped at the
-  // list end so the last row is never cut by the bottom bar). The viewport's
-  // in-flow size is zero (the list is absolute), so opening the OSK squeezes
-  // the viewport, never the OSK.
-  let listNode: NodeMirror | undefined;
-  createEffect(() => {
-    const listH = rowCount() * ROW_STEP - (ROW_STEP - 64);
-    const maxScroll = Math.max(0, listH - VIEW_H);
-    const top = Math.min(Math.max(0, props.store.focused() - 1) * ROW_STEP, maxScroll);
-    if (listNode) animate(listNode, "translateY", -top, { dur: 150, easing: "out" });
-  });
+  const pressRow = (i: number): void => {
+    const item = props.store.results()[i];
+    if (item) props.store.play(item);
+    else if (props.store.hasMore()) props.store.loadMore(); // the sentinel row
+  };
 
   return (
     <View class="flex-col w-full h-full">
@@ -130,7 +136,9 @@ function Browse(props: { store: YoutubeStore }) {
           {props.store.phase() === "connect"
             ? "WAITING FOR HOST"
             : props.store.transport() === "usb"
-              ? "USB · PSPLINK"
+              ? platform.target === "vita"
+                ? "WIFI · PKNT"
+                : "USB · PSPLINK"
               : "HTTP · DEV"}
         </Text>
       </View>
@@ -150,9 +158,11 @@ function Browse(props: { store: YoutubeStore }) {
           </View>
         </View>
 
-        {/* Results: an animated, clipped scroll column of host-rendered
-            full-width rows (thumb left, text right, chevron far right). */}
-        <View class="flex-1 overflow-hidden mx-3 my-1">
+        {/* Results: the framework VirtualList — touch pan/fling + tap on
+            hosts with contacts, d-pad focus walk everywhere, only the
+            visible slice mounted. Rows are host-rendered full-width
+            textures (thumb left, text right, chevron far right). */}
+        <View class="flex-1 mx-3 my-1">
           <Show
             when={props.store.results().length > 0}
             fallback={
@@ -166,27 +176,42 @@ function Browse(props: { store: YoutubeStore }) {
               </View>
             }
           >
-            <View
-              nodeRef={(n) => (listNode = n)}
-              class="absolute flex-col gap-1"
-              style={{ insetT: 0, insetL: 0, width: CARD_VISIBLE_W }}
-            >
-              <For each={props.store.results()}>
-                {(item, i) => <ResultRow item={item} active={i() === props.store.focused()} />}
-              </For>
-              <Show when={props.store.hasMore()}>
-                <LoadMoreRow
-                  active={props.store.focused() >= props.store.results().length}
-                  busy={props.store.searching()}
-                />
-              </Show>
-            </View>
+            <VirtualList
+              count={rowCount()}
+              rowHeight={ROW_STEP}
+              height={listH()}
+              overscan={68}
+              inputActive={() => !osk.isOpen()}
+              onRowPress={pressRow}
+              // Touch scrolls fetch the next page as the end approaches;
+              // the d-pad flow keeps its explicit ○ on the sentinel row
+              // (nearEnd would double-fetch under the chase scroll).
+              onNearEnd={
+                hasFeature("input.touch")
+                  ? () => {
+                      if (props.store.hasMore() && !props.store.searching()) props.store.loadMore();
+                    }
+                  : undefined
+              }
+              touchRect={() => ({ x: 12, y: 70, w: CARD_VISIBLE_W, h: listH() })}
+              ref={setList}
+              renderRow={(i) => (
+                <Show
+                  when={i < props.store.results().length}
+                  fallback={
+                    <LoadMoreRow active={focusedRow() === i} busy={props.store.searching()} />
+                  }
+                >
+                  <ResultRow item={props.store.results()[i]} active={focusedRow() === i} />
+                </Show>
+              )}
+            />
           </Show>
         </View>
         <View class="flex-row justify-between px-4 pb-1">
           <Text class="text-xs" style={{ textColor: DIM, lineHeight: 12 }}>
             {props.store.results().length > 0
-              ? `${props.store.focused() + 1}/${props.store.results().length}`
+              ? `${Math.min(focusedRow(), props.store.results().length - 1) + 1}/${props.store.results().length}`
               : ""}
           </Text>
           <Text class="text-xs tracking-wide" style={{ textColor: props.store.status() ? RED : DIM, lineHeight: 12 }}>

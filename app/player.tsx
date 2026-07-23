@@ -6,14 +6,22 @@
 // clock), videoClose() on the way out. The HUD (title, progress, hints)
 // rides hot.prop/hot.text — per-frame paint-only writes, no reactive churn.
 //
-// Input: ○ pause/resume · ◁/▷ seek ±10 s · × back to results.
+// Input: ○ pause/resume · ◁/▷ seek ±10 s · × back to results. Touch (where
+// the host delivers contacts): tap toggles the HUD, double-tap the left or
+// right third seeks ±10 s, double-tap the center toggles pause, dragging
+// along the bottom strip scrubs the progress bar (live preview, one seek on
+// release), and a downward fling leaves the player. On PSP touches() is
+// always empty and every gesture path is inert.
 
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
+import { virtualFrame } from "@pocketjs/framework/clock";
+import { createGesture } from "@pocketjs/framework/gesture";
 import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
 import * as hot from "@pocketjs/framework/hot";
+import { hasFeature } from "@pocketjs/framework/platform";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
 
@@ -70,7 +78,7 @@ export default function Player(props: { store: YoutubeStore }) {
     hudLeft = buttons !== 0 ? HUD_FRAMES : Math.max(0, hudLeft - 1);
     const paused = p ? !p.playing || p.ended : false;
     hot.prop(hud, "opacity", hudLeft > 0 || paused ? 1 : 0);
-    if (p && p.durationS > 0) {
+    if (p && p.durationS > 0 && !scrubbing) {
       hot.prop(bar, "scaleX", Math.min(1, currentS / p.durationS));
       hot.text(clock, `${fmt(currentS)} / ${fmt(p.durationS)}`);
     }
@@ -81,6 +89,71 @@ export default function Player(props: { store: YoutubeStore }) {
   onButtonPress(BTN.LEFT, () => props.store.seekTo(currentS - 10));
   onButtonPress(BTN.RIGHT, () => props.store.seekTo(currentS + 10));
   onButtonPress(BTN.CROSS, () => props.store.stopPlayback());
+
+  // ---- touch (inert without contacts) --------------------------------------
+  // Screen thirds: double-tap left/right seeks, double-tap center pauses.
+  const DOUBLE_TAP_FRAMES = 18; // 0.3 s at 60 Hz
+  let lastTapFrame = -100;
+  let lastTapZone = 0;
+  const zoneOf = (x: number): number => (x < 160 ? -1 : x > 320 ? 1 : 0);
+
+  // Full-screen gestures — registered FIRST so the scrub strip below wins
+  // priority for contacts that land on it (last-registered first).
+  createGesture({
+    region: { rect: () => ({ x: 0, y: 0, w: 480, h: 272 }) },
+    onTap: (c) => {
+      const zone = zoneOf(c.x);
+      const f = virtualFrame();
+      if (f - lastTapFrame <= DOUBLE_TAP_FRAMES && zone === lastTapZone) {
+        lastTapFrame = -100;
+        if (zone === 0) props.store.togglePause();
+        else props.store.seekTo(currentS + zone * 10);
+        hudLeft = HUD_FRAMES;
+        return;
+      }
+      lastTapFrame = f;
+      lastTapZone = zone;
+      hudLeft = hudLeft > 0 ? 0 : HUD_FRAMES; // single tap toggles the HUD
+    },
+    onPanEnd: (c) => {
+      // A decisive downward fling leaves the player (the swipe-back).
+      if (c.dy > 80 && c.vy > 240) props.store.stopPlayback();
+    },
+  });
+
+  // The scrub strip: horizontal drags along the bottom HUD band preview the
+  // bar/clock live and issue ONE seek at release.
+  let scrubbing = false;
+  let scrubFrac = 0;
+  const barFrac = (x: number): number => Math.min(1, Math.max(0, (x - 12) / 456));
+  createGesture({
+    region: { rect: () => ({ x: 0, y: 272 - 48, w: 480, h: 48 }) },
+    axis: "x",
+    onPanStart: (c) => {
+      scrubbing = true;
+      scrubFrac = barFrac(c.x);
+      hudLeft = HUD_FRAMES;
+    },
+    onPanMove: (c) => {
+      if (!scrubbing) return;
+      scrubFrac = barFrac(c.x);
+      hudLeft = HUD_FRAMES;
+      const p = props.store.player();
+      if (p && p.durationS > 0) {
+        hot.prop(bar, "scaleX", scrubFrac);
+        hot.text(clock, `${fmt(scrubFrac * p.durationS)} / ${fmt(p.durationS)}`);
+      }
+    },
+    onPanEnd: () => {
+      if (!scrubbing) return;
+      scrubbing = false;
+      const p = props.store.player();
+      if (p && p.durationS > 0) props.store.seekTo(scrubFrac * p.durationS);
+    },
+    onCancel: () => {
+      scrubbing = false;
+    },
+  });
 
   return (
     <View class="w-full h-full" style={{ bgColor: "#000000" }}>
@@ -145,7 +218,9 @@ export default function Player(props: { store: YoutubeStore }) {
               0:00 / 0:00
             </Text>
             <Text class="text-xs tracking-wide" style={{ textColor: DIM, lineHeight: 13 }}>
-              ○ PAUSE · ◁▷ ±10s · × BACK
+              {hasFeature("input.touch")
+                ? "TAP HUD · 2×TAP SEEK · DRAG BAR · ▼ BACK"
+                : "○ PAUSE · ◁▷ ±10s · × BACK"}
             </Text>
           </View>
         </View>

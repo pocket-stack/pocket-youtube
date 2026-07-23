@@ -9,6 +9,7 @@
 import { createSignal } from "solid-js";
 import { runEffect } from "@pocketjs/framework/effects";
 import { virtualFrame } from "@pocketjs/framework/clock";
+import { platform } from "@pocketjs/framework/platform";
 import { onHostPush, resolveTransport, type Transport } from "./driver.ts";
 import type { HostMsg, ResultItem } from "./protocol.ts";
 
@@ -31,7 +32,6 @@ export function createYoutubeStore() {
   const [transport, setTransport] = createSignal<Transport>("none");
   const [query, setQuery] = createSignal("");
   const [results, setResults] = createSignal<ResultItem[]>([]);
-  const [focused, setFocused] = createSignal(0);
   const [searching, setSearching] = createSignal(false);
   /** The last fetch returned rows — a LOAD MORE row is worth offering. */
   const [hasMore, setHasMore] = createSignal(false);
@@ -40,6 +40,9 @@ export function createYoutubeStore() {
   /** Bumped on every "playing" reply — the player screen re-opens the
    *  stream when it changes (fresh .pkst file per play/replay). */
   const [playSerial, setPlaySerial] = createSignal(0);
+  /** Bumped when a FRESH search replaces the list (appends do not) — the
+   *  browse screen focuses row 0 so ○ plays the first result immediately. */
+  const [searchSerial, setSearchSerial] = createSignal(0);
   let lastHello = -1;
 
   onHostPush((msg: HostMsg) => {
@@ -51,7 +54,10 @@ export function createYoutubeStore() {
 
   const hello = (): void => {
     lastHello = virtualFrame();
-    runEffect<HostMsg>("yt/hello", {}, (msg) => {
+    // The device field negotiates the stream profile host-side: a vita
+    // build gets the 512x256@24/44.1k pipeline, everything else keeps the
+    // tuned PSP defaults (host/profiles.ts).
+    runEffect<HostMsg>("yt/hello", { device: { target: platform.target } }, (msg) => {
       if (msg.t === "ready") {
         setTransport(resolveTransport());
         if (phase() === "connect") setPhase("browse");
@@ -76,8 +82,8 @@ export function createYoutubeStore() {
       setSearching(false);
       if (msg.t === "results") {
         setResults(msg.items);
-        setFocused(0);
         setHasMore(msg.items.length > 0);
+        if (msg.items.length > 0) setSearchSerial(searchSerial() + 1);
         setStatus(msg.items.length === 0 ? "NO RESULTS" : "");
       } else if (msg.t === "error") {
         setStatus(msg.message === "offline" ? "HOST OFFLINE" : `ERROR: ${msg.message}`);
@@ -97,10 +103,8 @@ export function createYoutubeStore() {
       if (msg.t === "results") {
         setHasMore(msg.items.length > 0);
         setResults([...results(), ...msg.items]);
-        // End of results: the sentinel row vanishes — pull focus back in.
-        if (msg.items.length === 0) {
-          setFocused(Math.min(focused(), Math.max(0, results().length - 1)));
-        }
+        // End of results: the sentinel row vanishes; the VirtualList's
+        // focus repair pulls the focused index back onto the last real row.
         setStatus("");
       } else if (msg.t === "error") {
         setStatus(`ERROR: ${msg.message}`);
@@ -159,13 +163,12 @@ export function createYoutubeStore() {
     query,
     setQuery,
     results,
-    focused,
-    setFocused,
     searching,
     hasMore,
     status,
     player,
     playSerial,
+    searchSerial,
     connectTick,
     hello,
     search,

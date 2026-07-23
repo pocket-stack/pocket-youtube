@@ -247,3 +247,56 @@ describe("system OSK", () => {
     expect(s[0].q).toBe("q"); // …with the touched key
   }, 30000);
 });
+
+// ---------------------------------------------------------------------------
+// Journey: the modern-mobile path — touch does everything the d-pad did.
+// ---------------------------------------------------------------------------
+
+describe("touch UX", () => {
+  test("tap a row to play; player gestures pause, scrub and leave", async () => {
+    const host = cannedHost();
+    const touches = new Map<number, number[]>();
+    const tapAt = (f: number, x: number, y: number, id = 1) => {
+      touches.set(f, [__packTouch(id, x, y)]);
+      touches.set(f + 1, [__packTouch(id, x, y)]);
+    };
+    // Search first (buttons — keyboards are covered elsewhere), then TOUCH:
+    const base = Math.ceil(kb.end * 60);
+    tapAt(base + 30, 200, 100); //          tap row 0 -> play
+    // Player: double-tap the center -> pause…
+    tapAt(base + 120, 240, 136, 2);
+    tapAt(base + 128, 240, 136, 3);
+    // …scrub the bottom strip to ~2/3…
+    for (let i = 0; i <= 10; i++) {
+      touches.set(base + 190 + i, [__packTouch(4, 100 + i * 20, 250)]);
+    }
+    // …and swipe down decisively to leave the player.
+    for (let i = 0; i <= 6; i++) {
+      touches.set(base + 260 + i, [__packTouch(5, 240, 60 + i * 24)]);
+    }
+    const r = await run(Math.ceil(kb.end + 6), kb.events, { driver: host.driver, touches });
+    const kinds = r.effects.filter((e) => e.t === "command").map((e) => e.kind);
+    expect(kinds).toEqual(["yt/hello", "yt/search", "yt/play", "yt/pause", "yt/seek", "yt/stop"]);
+    // The scrub landed where the finger let go (x=300 -> (300-12)/456 of 754 s).
+    const seek = host.seen.find((c) => c.kind === "yt/seek")!.payload as { to: number };
+    expect(Math.abs(seek.to - ((300 - 12) / 456) * 754)).toBeLessThan(20);
+    // Back on the browse screen with the results intact.
+    expect(treeHasText(r.tree, "1/2")).toBe(true);
+  }, 30000);
+
+  test("touch fling scrolls the list without pressing a row", async () => {
+    const host = cannedHost();
+    const touches = new Map<number, number[]>();
+    const base = Math.ceil(kb.end * 60);
+    // A fast upward drag across the list: pan claims, no tap, list flings.
+    for (let i = 0; i <= 5; i++) {
+      touches.set(base + 30 + i, [__packTouch(9, 200, 180 - i * 18)]);
+    }
+    const r = await run(Math.ceil(kb.end + 3), kb.events, { driver: host.driver, touches });
+    const kinds = r.effects.filter((e) => e.t === "command").map((e) => e.kind);
+    expect(kinds.filter((k) => k === "yt/play").length).toBe(0); // never a tap
+    // The near-end fetch is feature-gated OFF in this (buttonish) build, so
+    // the fling only moves pixels — the browse chrome is still up.
+    expect(treeHasText(r.tree, "SEARCH")).toBe(true);
+  }, 30000);
+});
