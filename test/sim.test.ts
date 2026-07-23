@@ -20,10 +20,10 @@ import {
   treeHasText,
   type ScriptEvent,
 } from "./harness.ts";
-import { BTN, SCREEN_H, SCREEN_W } from "../vendor/pocketjs/spec/spec.ts";
-import { layoutRows, OSK_H, OSK_LAYERS, OSK_PAD, OSK_GAP, OSK_ROW_H } from "../vendor/pocketjs/src/osk-layout.ts";
-import { __packTouch } from "../vendor/pocketjs/src/touch.ts";
-import { OskScripter } from "../vendor/pocketjs/test/osk-script.ts";
+import { BTN, SCREEN_H, SCREEN_W } from "../vendor/pocketjs/contracts/spec/spec.ts";
+import { layoutRows, OSK_H, OSK_LAYERS, OSK_PAD, OSK_GAP, OSK_ROW_H } from "../vendor/pocketjs/framework/src/osk-layout.ts";
+import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
+import { OskScripter } from "../vendor/pocketjs/tests/osk-script.ts";
 import type { HostMsg, ResultItem } from "../app/protocol.ts";
 
 const ITEMS: ResultItem[] = [

@@ -3,7 +3,7 @@
 //   bun scripts/psp.ts        # debug profile (opt-level 3 override below)
 //   bun scripts/psp.ts -r     # release
 //
-// The cross env matches vendor/pocketjs/scripts/psp.ts: Homebrew LLVM first
+// The cross env matches vendor/pocketjs/tools/psp.ts: Homebrew LLVM first
 // on PATH, TARGET_CFLAGS for the
 // MIPS clang C builds, llvm-ar/ranlib for MIPS archives (Apple ar drops
 // them), RUST_PSP_TARGET at the vendored target json, RUST_PSP_ABORT_ONLY=1.
@@ -12,7 +12,7 @@
 
 import { $ } from "bun";
 import { existsSync } from "node:fs";
-import { resolvePspBuildToolchain } from "../vendor/pocketjs/scripts/psp-toolchain.ts";
+import { resolvePspBuildToolchain } from "../vendor/pocketjs/tools/psp-toolchain.ts";
 import {
   compilePocketTarget,
   nativePlanEnvironment,
@@ -42,7 +42,7 @@ const llvm = toolchain.llvmBin;
 const env = {
   ...toolchain.environment,
   // Benign +abicalls(newlib) vs +noabicalls(rust-psp) linker warnings stay
-  // suppressed, matching vendor/pocketjs/scripts/psp.ts.
+  // suppressed, matching vendor/pocketjs/tools/psp.ts.
   RUSTFLAGS: "-A linker-messages -A unexpected-cfgs -A unstable-name-collisions",
   CRATE_CC_NO_DEFAULTS: "1",
   TARGET_CC: "clang",
@@ -55,7 +55,7 @@ const env = {
   // CRITICAL: archive MIPS objects with llvm-ar (Apple ar drops them -> undefined JS_*).
   AR_mipsel_sony_psp: `${llvm}/llvm-ar`,
   RANLIB_mipsel_sony_psp: `${llvm}/llvm-ranlib`,
-  RUST_PSP_TARGET: `${repo}vendor/pocketjs/native/targets/mipsel-sony-psp.json`,
+  RUST_PSP_TARGET: `${repo}vendor/pocketjs/hosts/psp/targets/mipsel-sony-psp.json`,
   // panic-abort EBOOTs: no panic_unwind/libunwind in build-std.
   RUST_PSP_ABORT_ONLY: "1",
   // Keep PSP dev builds fast (opt-level 0 is unusably slow on hardware).

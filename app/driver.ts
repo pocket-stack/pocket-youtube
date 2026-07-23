@@ -17,7 +17,7 @@
 
 import { getOps, type HostOps } from "@pocketjs/framework/host";
 import { installEffectDriver } from "@pocketjs/framework/effects";
-import { packbitsDecode, PSM } from "../vendor/pocketjs/spec/spec.ts";
+import { packbitsDecode, PSM } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import type { DeviceCmd, HostMsg } from "./protocol.ts";
 
 const HTTP_BASE = "http://127.0.0.1:8620";

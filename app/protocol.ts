@@ -6,9 +6,12 @@
 // Every request carries the app's effect-command id; the reply echoes it, so
 // the app's driver can route deliveries without ordering assumptions.
 
-/** PSP -> host (out.jsonl). */
+/** Device -> host (out.jsonl / PKNT ctrl). */
 export type DeviceCmd =
-  | { t: "hello"; id: number }
+  /** `device` negotiates the stream profile: the host picks plane size,
+   *  frame rate and audio rate per target (host/profiles.ts). Omitted (the
+   *  PSP app predates it) = the tuned PSP defaults. */
+  | { t: "hello"; id: number; device?: { target?: string; density?: number } }
   | { t: "search"; id: number; q: string }
   /** Next batch of the LAST search; replies `results` with only NEW items. */
   | { t: "more"; id: number }

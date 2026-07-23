@@ -24,7 +24,7 @@ import {
   STREAM_VRING_MAGIC,
   STREAM_VRING_OFF,
   TEX_MAX_DIM,
-} from "../vendor/pocketjs/spec/spec.ts";
+} from "../vendor/pocketjs/contracts/spec/spec.ts";
 
 export interface StreamGeometry {
   /** Plane dims — pow2 <= TEX_MAX_DIM (the plane texture IS the frame). */

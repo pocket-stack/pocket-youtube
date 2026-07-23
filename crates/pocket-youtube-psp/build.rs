@@ -1,7 +1,7 @@
 //! Embeds the built viewer into the EBOOT: dist/main.js (NUL-terminated for
 //! JS_Eval, which requires input[len] == '\0'; main.rs evals len - 1) and
 //! dist/main.pak (styles.bin + font atlases + the baked TILESET pyramids).
-//! Same include_str!/include_bytes! pattern as vendor/pocketjs/native/
+//! Same include_str!/include_bytes! pattern as vendor/pocketjs/hosts/psp/
 //! build.rs. POCKETJS_APP_OUTPUT comes from PocketJS HostBuildInputs.
 //! Missing outputs fail the build; scripts/psp.ts always compiles first.
 

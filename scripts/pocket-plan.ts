@@ -15,7 +15,7 @@ export async function compilePocketTarget(
   const manifestPath = `${projectRoot}pocket.json`;
   const planPath = `${projectRoot}.pocket/${target}/plan.json`;
 
-  await $`bun vendor/pocketjs/scripts/pocket.ts compile --target ${target} --manifest ${manifestPath} --project-root ${projectRoot} --outdir ${outputDirectory}`
+  await $`bun vendor/pocketjs/tools/pocket.ts compile --target ${target} --manifest ${manifestPath} --project-root ${projectRoot} --outdir ${outputDirectory}`
     .cwd(projectRoot);
 
   const plan: unknown = await Bun.file(planPath).json();
