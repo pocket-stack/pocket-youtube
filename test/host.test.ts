@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
-import { packbitsDecode, PSM } from "../vendor/pocketjs/spec/spec.ts";
+import { packbitsDecode, PSM } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { paletteBytes, quantize } from "../host/quant.ts";
 import { encodeImgT8 } from "../host/img.ts";
 import { readStream, StreamWriter, type StreamGeometry } from "../host/ring.ts";

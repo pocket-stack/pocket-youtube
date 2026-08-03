@@ -14,6 +14,7 @@
 // Deterministic given the same inputs — the golden test feeds a fixed RGBA
 // thumb and asserts the row bytes.
 
+import { proxyUrl } from "./proxy.ts";
 import { existsSync } from "node:fs";
 import { parse as parseFont, type Font } from "opentype.js";
 
@@ -342,7 +343,11 @@ function roundCorners(rgba: Uint8Array): void {
  *  Null on any failure — the card falls back to the placeholder panel. */
 export async function fetchThumbRGBA(url: string, tmpDir: string): Promise<Uint8Array | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      // Bun fetch option; explicit beats ambient env for testability.
+      proxy: proxyUrl ?? undefined,
+    });
     if (!res.ok) return null;
     const tmp = `${tmpDir}/thumb-${Bun.hash(url).toString(16)}.img`;
     await Bun.write(tmp, await res.arrayBuffer());

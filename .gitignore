@@ -9,3 +9,4 @@ target/
 .DS_Store
 test/goldens-vita/*.actual.png
 out/
+.env

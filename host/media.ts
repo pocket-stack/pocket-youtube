@@ -15,51 +15,36 @@
 // seek = kill + respawn at the new offset + epoch bump (the device drops its
 // ring positions and re-syncs to the tail).
 //
-// The plane is 256x128 (pow2, spec requirement) PRE-SQUASHED for the PSP's
-// 480x272 stretch: content letterboxed for the final screen aspect, not the
-// texture's own 2:1 — see planeBox().
+// The plane geometry comes from the device profile (profiles.ts): the PSP
+// keeps its tuned 512x128@12 defaults; the Vita negotiates 512x256@24 at
+// hello. Frames are PRE-SQUASHED for the 480x272 logical stretch: content
+// letterboxed for the final screen aspect, not the texture's own aspect —
+// see planeBox(). Output lands in a StreamSink (sink.ts): the PSP's ring
+// FILE or the Vita's TCP slot push, same geometry either way.
 
-import { unlinkSync } from "node:fs";
-import type { StreamGeometry } from "./ring.ts";
-import { StreamWriter } from "./ring.ts";
+import { ffmpegProxyArgs, proxyEnv } from "./proxy.ts";
 import { quantize, paletteBytes } from "./quant.ts";
+import type { StreamSink } from "./sink.ts";
 import type { ResolvedStream } from "./yt.ts";
-
-// 512x128: horizontal resolution lands near 1:1 on the 480-wide screen
-// (sharpness lives in horizontal detail); vertical stays the 2.1x stretch.
-// 12 fps x 65 KB slots + audio ≈ 0.87 MB/s — inside the usbhostfs budget
-// the device pumps at IO_BUDGET per tick (native/src/vid.rs).
-export const PLANE_W = 512;
-export const PLANE_H = 128;
-export const FPS = 12;
-export const SAMPLE_RATE = 22050;
-export const CHUNK_FRAMES = 2048;
-
-export const GEOMETRY: Omit<StreamGeometry, "totalFrames"> = {
-  w: PLANE_W,
-  h: PLANE_H,
-  fpsNum: FPS,
-  fpsDen: 1,
-  slotCount: 8,
-  sampleRate: SAMPLE_RATE,
-  channels: 2,
-  chunkFrames: CHUNK_FRAMES,
-  chunkCount: 64,
-};
 
 /**
  * Content box inside the plane for a source aspect ratio: the plane is
  * stretched to the full 480x272 screen, so the box must letterbox in SCREEN
- * space and then map back into plane texels (x: *256/480, y: *128/272).
- * For 16:9 that lands at 256x127 — half-pixel bars, effectively full plane.
+ * space and then map back into plane texels. For a 16:9 source the error vs
+ * a true screen-space letterbox is sub-pixel — effectively full plane.
  */
-export function planeBox(srcW: number, srcH: number): { w: number; h: number } {
+export function planeBox(
+  srcW: number,
+  srcH: number,
+  planeW: number,
+  planeH: number,
+): { w: number; h: number } {
   const screenW = 480;
   const screenH = 272;
   const fit = Math.min(screenW / srcW, screenH / srcH);
-  const w = Math.round(((srcW * fit) / screenW) * PLANE_W);
-  const h = Math.round(((srcH * fit) / screenH) * PLANE_H);
-  return { w: Math.min(PLANE_W, Math.max(16, w & ~1)), h: Math.min(PLANE_H, Math.max(16, h & ~1)) };
+  const w = Math.round(((srcW * fit) / screenW) * planeW);
+  const h = Math.round(((srcH * fit) / screenH) * planeH);
+  return { w: Math.min(planeW, Math.max(16, w & ~1)), h: Math.min(planeH, Math.max(16, h & ~1)) };
 }
 
 export interface SessionEvents {
@@ -69,10 +54,9 @@ export interface SessionEvents {
 
 export class PlaySession {
   readonly stream: ResolvedStream;
-  readonly file: string;
   /** svc-relative path the app passes to videoOpen. */
   readonly relPath: string;
-  private writer: StreamWriter;
+  private writer: StreamSink;
   private video: Bun.Subprocess | null = null;
   private audio: Bun.Subprocess | null = null;
   private baseFrame = 0;
@@ -83,31 +67,32 @@ export class PlaySession {
   private closed = false;
   private events: SessionEvents;
 
-  constructor(stream: ResolvedStream, svcDir: string, relPath: string, events: SessionEvents = {}) {
+  constructor(stream: ResolvedStream, sink: StreamSink, events: SessionEvents = {}) {
     this.stream = stream;
-    this.relPath = relPath;
-    this.file = `${svcDir}/${relPath}`;
+    this.relPath = sink.relPath;
     this.events = events;
-    this.writer = new StreamWriter(this.file, {
-      ...GEOMETRY,
-      totalFrames: Math.max(0, Math.round(stream.durationS * FPS)),
-    });
+    this.writer = sink;
     this.spawnAt(0);
   }
 
+  private get fps(): number {
+    return this.writer.geo.fpsNum / this.writer.geo.fpsDen;
+  }
+
   get positionBase(): number {
-    return this.baseFrame / FPS;
+    return this.baseFrame / this.fps;
   }
 
   private spawnAt(seconds: number): void {
-    this.baseFrame = Math.round(seconds * FPS);
-    this.baseSample = Math.round(seconds * SAMPLE_RATE);
+    const geo = this.writer.geo;
+    this.baseFrame = Math.round(seconds * this.fps);
+    this.baseSample = Math.round(seconds * geo.sampleRate);
     const seek = seconds > 0 ? ["-ss", seconds.toFixed(2)] : [];
     // Letterbox in SCREEN space, not texture space: the plane's texels are
     // anamorphic (the 512x128 texture stretches to 480x272), so fitting the
     // source into the raw texture box would pillarbox 16:9 into a strip.
     // planeBox maps the true screen-space fit back into texels.
-    const box = planeBox(this.stream.width || 16, this.stream.height || 9);
+    const box = planeBox(this.stream.width || 16, this.stream.height || 9, geo.w, geo.h);
     this.video = Bun.spawn(
       [
         "ffmpeg",
@@ -115,13 +100,14 @@ export class PlaySession {
         "-loglevel",
         "error",
         "-re",
+        ...ffmpegProxyArgs(),
         ...seek,
         "-i",
         this.stream.url,
         "-vf",
         // lanczos: the plane is anamorphic (wide texels), so every scrap of
         // horizontal acutance from the 720p source survives to the screen.
-        `fps=${FPS},scale=${box.w}:${box.h}:flags=lanczos,pad=${PLANE_W}:${PLANE_H}:(ow-iw)/2:(oh-ih)/2:black`,
+        `fps=${this.fps},scale=${box.w}:${box.h}:flags=lanczos,pad=${geo.w}:${geo.h}:(ow-iw)/2:(oh-ih)/2:black`,
         "-an",
         "-f",
         "rawvideo",
@@ -129,7 +115,7 @@ export class PlaySession {
         "rgb24",
         "pipe:1",
       ],
-      { stdout: "pipe", stderr: "ignore" },
+      { stdout: "pipe", stderr: "ignore", env: { ...process.env, ...proxyEnv() } },
     );
     this.audio = Bun.spawn(
       [
@@ -138,6 +124,7 @@ export class PlaySession {
         "-loglevel",
         "error",
         "-re",
+        ...ffmpegProxyArgs(),
         ...seek,
         "-i",
         this.stream.url,
@@ -145,12 +132,12 @@ export class PlaySession {
         "-ac",
         "2",
         "-ar",
-        String(SAMPLE_RATE),
+        String(geo.sampleRate),
         "-f",
         "s16le",
         "pipe:1",
       ],
-      { stdout: "pipe", stderr: "ignore" },
+      { stdout: "pipe", stderr: "ignore", env: { ...process.env, ...proxyEnv() } },
     );
     void this.pumpVideo(this.video, this.baseFrame);
     void this.pumpAudio(this.audio, this.baseSample);
@@ -161,8 +148,9 @@ export class PlaySession {
    *  16:9 source the error vs. a true screen-space letterbox is <1% (see
    *  planeBox); acceptable against a second scale pass. */
   private async pumpVideo(proc: Bun.Subprocess, baseFrame: number): Promise<void> {
-    const frameBytes = PLANE_W * PLANE_H * 3;
-    const rgba = new Uint8Array(PLANE_W * PLANE_H * 4);
+    const { w: planeW, h: planeH } = this.writer.geo;
+    const frameBytes = planeW * planeH * 3;
+    const rgba = new Uint8Array(planeW * planeH * 4);
     let pending = new Uint8Array(0);
     let index = 0;
     const stdout = proc.stdout;
@@ -174,13 +162,13 @@ export class PlaySession {
       while (buf.length - off >= frameBytes) {
         const rgb = buf.subarray(off, off + frameBytes);
         off += frameBytes;
-        for (let i = 0; i < PLANE_W * PLANE_H; i++) {
+        for (let i = 0; i < planeW * planeH; i++) {
           rgba[i * 4] = rgb[i * 3];
           rgba[i * 4 + 1] = rgb[i * 3 + 1];
           rgba[i * 4 + 2] = rgb[i * 3 + 2];
           rgba[i * 4 + 3] = 255;
         }
-        const q = quantize(rgba, PLANE_W, PLANE_H);
+        const q = quantize(rgba, planeW, planeH);
         if (this.closed || proc !== this.video) return;
         this.writer.writeFrame(baseFrame + index, paletteBytes(q.palette), q.indices);
         index++;
@@ -195,7 +183,8 @@ export class PlaySession {
   }
 
   private async pumpAudio(proc: Bun.Subprocess, baseSample: number): Promise<void> {
-    const chunkSamples = CHUNK_FRAMES * 2;
+    const geo = this.writer.geo;
+    const chunkSamples = geo.chunkFrames * geo.channels;
     let pending = new Uint8Array(0);
     let frames = 0;
     const stdout = proc.stdout;
@@ -211,7 +200,7 @@ export class PlaySession {
         const pcm = new Int16Array(bytes.buffer, 0, chunkSamples);
         if (this.closed || proc !== this.audio) return;
         this.writer.writeAudio(baseSample + frames, pcm);
-        frames += CHUNK_FRAMES;
+        frames += geo.chunkFrames;
       }
       pending = buf.slice();
     }
@@ -243,7 +232,7 @@ export class PlaySession {
    *  cleanly (kill + respawn + epoch bump); reuse it. */
   resume(): void {
     if (!this.paused || this.closed) return;
-    this.seek(this.framesWritten / FPS);
+    this.seek(this.framesWritten / this.fps);
   }
 
   get isPaused(): boolean {
@@ -267,18 +256,13 @@ export class PlaySession {
     this.audio = null;
   }
 
-  /** Stop and delete the ring file (a new session writes a fresh file — the
-   *  device holds no fd into this one once the app videoClose()s). */
+  /** Stop and close the sink (the file sink deletes its ring file — the
+   *  device holds no fd into it once the app videoClose()s). */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.killProcs();
     this.writer.close();
-    try {
-      unlinkSync(this.file);
-    } catch {
-      // already gone — fine
-    }
   }
 }
 

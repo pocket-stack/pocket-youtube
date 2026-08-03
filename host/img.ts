@@ -6,7 +6,7 @@
 // 8888/4444; the youtube host ships everything as PSM_T8 — quantized,
 // PackBits-RLE'd (cards are mostly flat runs), bilinear-flagged.
 
-import { IMG_FLAG_LINEAR, IMG_FLAG_RLE, packbitsEncode, PSM, TEX_MAX_DIM } from "../vendor/pocketjs/spec/spec.ts";
+import { IMG_FLAG_LINEAR, IMG_FLAG_RLE, packbitsEncode, PSM, TEX_MAX_DIM } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { paletteBytes, quantize } from "./quant.ts";
 
 /** Encode RGBA pixels as a PSM_T8 IMG entry (pow2 dims <= TEX_MAX_DIM). */

@@ -1,12 +1,12 @@
 // test/harness.ts — boot the Pocket YouTube bundle against PocketJS's wasm
-// core, exactly like vendor/pocketjs/host-sim/sim.ts does for in-repo demos,
+// core, exactly like vendor/pocketjs/hosts/sim/sim.ts does for in-repo demos,
 // but with this project's dist/ and plan-compiled bundle. The pure helpers
 // (scriptToMasks, treeHasText, fnv1a, ScriptEvent) are imported from the
 // vendored harness — only the boot path is project-specific.
 
 import { existsSync } from "node:fs";
-import { createWasmUi } from "../vendor/pocketjs/host-web/wasm-ops.js";
-import type { EffectEvent } from "../vendor/pocketjs/host-sim/sim.ts";
+import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
+import type { EffectEvent } from "../vendor/pocketjs/hosts/sim/sim.ts";
 import { compilePocketTarget } from "../scripts/pocket-plan.ts";
 
 export {
@@ -15,11 +15,11 @@ export {
   treeHasText,
   type EffectEvent,
   type ScriptEvent,
-} from "../vendor/pocketjs/host-sim/sim.ts";
+} from "../vendor/pocketjs/hosts/sim/sim.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DIST = `${ROOT}dist/`;
-const WASM = `${ROOT}vendor/pocketjs/host-web/pocketjs.wasm`;
+const WASM = `${ROOT}vendor/pocketjs/hosts/web/pocketjs.wasm`;
 const TICKS_PER_SECOND = 60;
 
 export interface SimWorld {
@@ -42,7 +42,7 @@ export async function bootWorld(
   extraGlobals?: Record<string, unknown>,
 ): Promise<SimWorld> {
   if (!existsSync(WASM)) {
-    const p = Bun.spawnSync(["bun", "scripts/wasm.ts"], {
+    const p = Bun.spawnSync(["bun", "tools/wasm.ts"], {
       cwd: `${ROOT}vendor/pocketjs`,
       stdout: "inherit",
       stderr: "inherit",

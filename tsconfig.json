@@ -8,12 +8,14 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "types": ["bun-types"],
     "paths": {
-      "@pocketjs/framework": ["./vendor/pocketjs/src/index.ts"],
-      "@pocketjs/framework/solid": ["./vendor/pocketjs/src/index.ts"],
-      "@pocketjs/framework/input": ["./vendor/pocketjs/src/input-api.ts"],
-      "@pocketjs/framework/*": ["./vendor/pocketjs/src/*"]
+      "@pocketjs/framework": ["./vendor/pocketjs/framework/src/index.ts"],
+      "@pocketjs/framework/solid": ["./vendor/pocketjs/framework/src/index.ts"],
+      "@pocketjs/framework/input": ["./vendor/pocketjs/framework/src/input-api.ts"],
+      "@pocketjs/framework/*": ["./vendor/pocketjs/framework/src/*"],
+      "tools/cli/*": ["./vendor/pocketjs/tools/cli/*"]
     }
   },
   "include": ["app", "tools", "scripts"]

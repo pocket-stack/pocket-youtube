@@ -9,6 +9,8 @@
 // The runner is injectable so tests exercise the parsing without a network
 // (memory: never .sh — Bun.spawn only).
 
+import { ytDlpProxyArgs } from "./proxy.ts";
+
 export interface SearchItem {
   videoId: string;
   title: string;
@@ -34,7 +36,11 @@ export interface ResolvedStream {
 export type Runner = (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
 export const spawnRunner: Runner = async (args) => {
-  const proc = Bun.spawn(["yt-dlp", ...args], { stdout: "pipe", stderr: "pipe" });
+  // The proxy rides an explicit flag (beats env-var ambiguity inside yt-dlp).
+  const proc = Bun.spawn(["yt-dlp", ...ytDlpProxyArgs(), ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
