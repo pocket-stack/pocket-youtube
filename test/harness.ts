@@ -41,10 +41,14 @@ export async function bootWorld(
   hz: number,
   extraGlobals?: Record<string, unknown>,
 ): Promise<SimWorld> {
-  if (!existsSync(WASM)) {
+  // ALWAYS rebuild: cargo's own caching makes a fresh build a ~2s no-op,
+  // and a stale pocketjs.wasm silently reroutes every touch journey through
+  // the ink-query fallback instead of the hit-fact path (the constant-33
+  // hardware bug shipped through exactly that hole).
+  {
     const p = Bun.spawnSync(["bun", "tools/wasm.ts"], {
       cwd: `${ROOT}vendor/pocketjs`,
-      stdout: "inherit",
+      stdout: "pipe",
       stderr: "inherit",
     });
     if (p.exitCode !== 0) throw new Error("harness: wasm build failed");
