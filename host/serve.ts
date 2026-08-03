@@ -21,7 +21,17 @@ import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "
 import { resolve as resolvePath } from "node:path";
 import { WIRE_PORT } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import type { DeviceCmd, HostMsg, ResultItem } from "../app/protocol.ts";
-import { CARD_H, CARD_W, fetchThumbRGBA, renderCard } from "./cards.ts";
+import {
+  CARD_H,
+  CARD_HD_HALF_W,
+  CARD_W,
+  downscale2,
+  fetchThumbRGBA,
+  renderCard,
+  renderCardHD,
+  THUMB_H,
+  THUMB_W,
+} from "./cards.ts";
 import { startBeacon } from "./discovery.ts";
 import { encodeImgT8 } from "./img.ts";
 import { PlaySession } from "./media.ts";
@@ -127,21 +137,35 @@ async function renderItems(
   found: Awaited<ReturnType<typeof search>>,
   ctx: TransportCtx,
 ): Promise<ResultItem[]> {
+  // Density-2 devices get the card composed at 2x and split into two
+  // 512-wide pow2 halves (TEX_MAX_DIM); ONE 2x thumbnail fetch feeds both —
+  // the classic 1x card is derived by box-downscale. The PSP path below is
+  // untouched byte-for-byte.
+  const hd = ctx.profile.name === "vita";
   return Promise.all(
     found.map(async (f) => {
-      const thumb = await fetchThumbRGBA(thumbnailUrl(f.videoId), `${svcDir}/thumbs`);
-      const rgba = await renderCard({
+      const input = {
         title: f.title,
         channel: f.channel,
         durationS: f.durationS,
         views: f.views,
-        thumbRgba: thumb,
-      });
+      };
+      const thumb2 = hd ? await fetchThumbRGBA(thumbnailUrl(f.videoId), `${svcDir}/thumbs`, 2) : null;
+      const thumb = hd
+        ? thumb2 && downscale2(thumb2, THUMB_W * 2, THUMB_H * 2)
+        : await fetchThumbRGBA(thumbnailUrl(f.videoId), `${svcDir}/thumbs`);
+      const rgba = await renderCard({ ...input, thumbRgba: thumb });
       const rel = `thumbs/${f.videoId}.img`;
       // Delivered BEFORE the results line that references it (implicit on
       // the shared filesystem, explicit frame ordering on TCP).
       ctx.pushFile(rel, encodeImgT8(rgba, CARD_W, CARD_H));
-      return { ...f, card: rel };
+      if (!hd) return { ...f, card: rel };
+      const { left, right } = await renderCardHD({ ...input, thumbRgba: thumb2 });
+      const relL = `thumbs/${f.videoId}-hd-l.img`;
+      const relR = `thumbs/${f.videoId}-hd-r.img`;
+      ctx.pushFile(relL, encodeImgT8(left, CARD_HD_HALF_W, CARD_H * 2));
+      ctx.pushFile(relR, encodeImgT8(right, CARD_HD_HALF_W, CARD_H * 2));
+      return { ...f, card: rel, cardHD: [relL, relR] as [string, string] };
     }),
   );
 }

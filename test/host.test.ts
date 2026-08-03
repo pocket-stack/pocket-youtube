@@ -12,7 +12,18 @@ import { packbitsDecode, PSM } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { paletteBytes, quantize } from "../host/quant.ts";
 import { encodeImgT8 } from "../host/img.ts";
 import { readStream, StreamWriter, type StreamGeometry } from "../host/ring.ts";
-import { cardFont, CARD_H, CARD_VISIBLE_W, CARD_W, fitLines, fmtDuration, renderCard } from "../host/cards.ts";
+import {
+  cardFont,
+  CARD_H,
+  CARD_HD_HALF_W,
+  CARD_VISIBLE_W,
+  CARD_W,
+  downscale2,
+  fitLines,
+  fmtDuration,
+  renderCard,
+  renderCardHD,
+} from "../host/cards.ts";
 import { search, resolve as resolveVideo, type Runner } from "../host/yt.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "pocket-youtube-"));
@@ -238,6 +249,39 @@ describe("cards", () => {
       expect(card[(y * CARD_W + x) * 4]).toBe(0x0b);
     }
     expect(card[(30 * CARD_W + 0) * 4 + 2]).toBe(160); // mid-left edge: thumb intact
+  });
+
+  test("renderCardHD: two seamless 512-wide halves at true 2x sharpness", async () => {
+    const { left, right } = await renderCardHD({
+      title: "Vue Vapor on a PSP — the longest title we render wraps to two lines",
+      channel: "pocket-stack",
+      durationS: 754,
+      views: 123456,
+      thumbRgba: solid(232, 128, 40, 80, 160),
+    });
+    const H2 = CARD_H * 2;
+    expect(left.length).toBe(CARD_HD_HALF_W * H2 * 4);
+    expect(right.length).toBe(CARD_HD_HALF_W * H2 * 4);
+    // The 2x thumbnail pixel lands in the left half.
+    expect(left[(20 * CARD_HD_HALF_W + 20) * 4 + 2]).toBe(160);
+    // The title band crosses the x=512 seam (text spans 252..~860 physical):
+    // the right half must carry ink in its leftmost columns — a broken split
+    // would show background there.
+    let seamInk = 0;
+    for (let y = 20; y < 60; y++) {
+      for (let x = 0; x < 40; x++) {
+        if (right[(y * CARD_HD_HALF_W + x) * 4] > 0x30) seamInk++;
+      }
+    }
+    expect(seamInk).toBeGreaterThan(0);
+  });
+
+  test("downscale2 box-averages a 2x buffer to 1x", () => {
+    const two = solid(4, 4, 100, 200, 40);
+    const one = downscale2(two, 4, 4);
+    expect(one.length).toBe(2 * 2 * 4);
+    expect(one[0]).toBe(100);
+    expect(one[1]).toBe(200);
   });
 
   test("fmtDuration covers m:ss and h:mm:ss", () => {
