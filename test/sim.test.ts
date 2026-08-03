@@ -246,6 +246,38 @@ describe("system OSK", () => {
     expect(s.length).toBe(1); // ✓ committed the search…
     expect(s[0].q).toBe("q"); // …with the touched key
   }, 30000);
+
+  test("tapping the search field summons the keyboard (TextField activation)", async () => {
+    // ZERO buttons in this journey: the field's hit fact carries the tap into
+    // the shared activation pipeline, TextField opens its own OSK, a key and
+    // ✓ finish the search — the hardware-day gap, pinned end to end.
+    const rows = layoutRows(OSK_LAYERS.lower, SCREEN_W - 2 * OSK_PAD);
+    const panelTop = SCREEN_H - OSK_H;
+    const at = (want: string): [number, number] => {
+      for (const row of rows) {
+        for (const k of row) {
+          if ((k.key.ch ?? k.key.label) === want) {
+            return [
+              OSK_PAD + k.x + Math.floor(k.w / 2),
+              panelTop + OSK_PAD + k.row * (OSK_ROW_H + OSK_GAP) + Math.floor(OSK_ROW_H / 2),
+            ];
+          }
+        }
+      }
+      throw new Error(`no key ${want}`);
+    };
+    const [qx, qy] = at("q");
+    const [okx, oky] = at("✓");
+    const touches = new Map<number, number[]>();
+    for (let f = 150; f < 154; f++) touches.set(f, [__packTouch(1, 240, 54)]); // the field box
+    for (let f = 210; f < 214; f++) touches.set(f, [__packTouch(2, qx, qy)]);
+    for (let f = 260; f < 264; f++) touches.set(f, [__packTouch(3, okx, oky)]);
+    const host = cannedHost();
+    await run(6, [], { driver: host.driver, touches });
+    const s = searches(host);
+    expect(s.length).toBe(1); // the tapped-open keyboard committed a search…
+    expect(s[0].q).toBe("q"); // …containing the touched key
+  }, 30000);
 });
 
 // ---------------------------------------------------------------------------

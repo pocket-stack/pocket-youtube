@@ -22,7 +22,7 @@ import { Image, Text, View } from "@pocketjs/framework/components";
 import { createSpriteAnimation, onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
-import { createOsk, Osk } from "@pocketjs/framework/osk";
+import { TextField, type OskController } from "@pocketjs/framework/osk";
 import { hasFeature, platform } from "@pocketjs/framework/platform";
 import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
@@ -85,23 +85,21 @@ export default function App() {
 // ---------------------------------------------------------------------------
 
 function Browse(props: { store: YoutubeStore }) {
-  const osk = createOsk({
-    value: props.store.query,
-    setValue: props.store.setQuery,
-    onCommit: () => props.store.search(),
-  });
+  // The field owns its OSK (TextField, docs/TOUCH.md §1); the controller
+  // ref keeps the squeeze layout and the △ shortcut.
+  const [osk, setOsk] = createSignal<OskController | null>(null);
 
   // Rows the list serves: real results plus the LOAD MORE sentinel.
   const rowCount = () => props.store.results().length + (props.store.hasMore() ? 1 : 0);
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   const focusedRow = () => list()?.focusedIndex() ?? 0;
   // Opening the OSK squeezes the list viewport, never the OSK.
-  const listH = () => (osk.isOpen() ? VIEW_H - 92 : VIEW_H);
+  const listH = () => (osk()?.isOpen() ? VIEW_H - 92 : VIEW_H);
 
   // While the OSK is open these are muted by its modal block — the keyboard
   // owns every button until it closes. The d-pad row walk and ○-to-play now
   // ride the framework focus manager through the VirtualList's rows.
-  onButtonPress(BTN.TRIANGLE, () => osk.open());
+  onButtonPress(BTN.TRIANGLE, () => osk()?.open());
   onButtonPress(BTN.START, () => props.store.search());
 
   // A fresh search replaces the list: focus row 0 (the same entry point the
@@ -149,13 +147,14 @@ function Browse(props: { store: YoutubeStore }) {
           <Text class="text-xs font-bold tracking-wide" style={{ textColor: RED }}>
             SEARCH
           </Text>
-          <View class="grow px-2 py-1 rounded-md bg-[#141c26] border-[#232e3c]">
-            <Text class="text-sm" style={{ textColor: props.store.query() || osk.isOpen() ? INK : DIM, lineHeight: 15 }}>
-              {osk.isOpen() || props.store.query()
-                ? osk.display()
-                : "△ TYPE A QUERY, START SEARCHES"}
-            </Text>
-          </View>
+          <TextField
+            value={props.store.query}
+            onInput={props.store.setQuery}
+            onSubmit={() => props.store.search()}
+            placeholder="△ TYPE A QUERY, START SEARCHES"
+            class="grow px-2 py-1 rounded-md bg-[#141c26] border-[#232e3c] focus:border-[#4a5a70] active:bg-[#1a2333]"
+            ref={setOsk}
+          />
         </View>
 
         {/* Results: the framework VirtualList — touch pan/fling + tap on
@@ -181,7 +180,7 @@ function Browse(props: { store: YoutubeStore }) {
               rowHeight={ROW_STEP}
               height={listH()}
               overscan={68}
-              inputActive={() => !osk.isOpen()}
+              inputActive={() => !osk()?.isOpen()}
               onRowPress={pressRow}
               // Touch scrolls fetch the next page as the end approaches;
               // the d-pad flow keeps its explicit ○ on the sentinel row
@@ -193,7 +192,6 @@ function Browse(props: { store: YoutubeStore }) {
                     }
                   : undefined
               }
-              touchRect={() => ({ x: 12, y: 70, w: CARD_VISIBLE_W, h: listH() })}
               ref={setList}
               renderRow={(i) => (
                 <Show
@@ -220,7 +218,6 @@ function Browse(props: { store: YoutubeStore }) {
         </View>
 
         {/* System keyboard, docked at the column bottom while open */}
-        <Osk osk={osk} />
       </Show>
     </View>
   );
