@@ -233,6 +233,8 @@ export interface CardInput {
 /** Fill an axis-aligned rect with `color`, alpha-blending at `a`. */
 function fillRect(
   rgba: Uint8Array,
+  cw: number,
+  ch: number,
   x0: number,
   y0: number,
   w: number,
@@ -240,9 +242,9 @@ function fillRect(
   color: readonly number[],
   a = 1,
 ): void {
-  for (let y = Math.max(0, y0); y < Math.min(CARD_H, y0 + h); y++) {
-    for (let x = Math.max(0, x0); x < Math.min(CARD_W, x0 + w); x++) {
-      const o = (y * CARD_W + x) * 4;
+  for (let y = Math.max(0, y0); y < Math.min(ch, y0 + h); y++) {
+    for (let x = Math.max(0, x0); x < Math.min(cw, x0 + w); x++) {
+      const o = (y * cw + x) * 4;
       rgba[o] = rgba[o] + (color[0] - rgba[o]) * a;
       rgba[o + 1] = rgba[o + 1] + (color[1] - rgba[o + 1]) * a;
       rgba[o + 2] = rgba[o + 2] + (color[2] - rgba[o + 2]) * a;
@@ -251,55 +253,109 @@ function fillRect(
   }
 }
 
-/** Compose one 512x64 RGBA row (quantize + encodeImgT8 downstream): thumb +
- *  duration badge | title (1-2 lines), channel, views | chevron. */
-export async function renderCard(input: CardInput): Promise<Uint8Array> {
+/** Compose one (512x64)*s RGBA row (quantize + encodeImgT8 downstream):
+ *  thumb + duration badge | title (1-2 lines), channel, views | chevron.
+ *  Every coordinate and font size scales linearly; the card font is a real
+ *  vector font, so s=2 is a genuinely sharper rasterization, not an upscale.
+ *  s=1 reproduces the classic PSP card byte-for-byte. */
+async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
   await cardFont();
-  const rgba = new Uint8Array(CARD_W * CARD_H * 4);
-  for (let i = 0; i < CARD_W * CARD_H; i++) {
+  const W = CARD_W * s;
+  const H = CARD_H * s;
+  const rgba = new Uint8Array(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
     rgba[i * 4] = BG[0];
     rgba[i * 4 + 1] = BG[1];
     rgba[i * 4 + 2] = BG[2];
     rgba[i * 4 + 3] = 255;
   }
-  if (input.thumbRgba && input.thumbRgba.length === THUMB_W * THUMB_H * 4) {
-    for (let y = 0; y < THUMB_H; y++) {
-      const src = input.thumbRgba.subarray(y * THUMB_W * 4, (y + 1) * THUMB_W * 4);
-      rgba.set(src, y * CARD_W * 4);
+  const tw2 = THUMB_W * s;
+  const th2 = THUMB_H * s;
+  if (input.thumbRgba && input.thumbRgba.length === tw2 * th2 * 4) {
+    for (let y = 0; y < th2; y++) {
+      const src = input.thumbRgba.subarray(y * tw2 * 4, (y + 1) * tw2 * 4);
+      rgba.set(src, y * W * 4);
     }
   } else {
     // Placeholder: a dimmer panel with a play glyph, so a failed thumbnail
     // fetch still reads as "a video".
-    fillRect(rgba, 0, 0, THUMB_W, THUMB_H, [0x1e, 0x2a, 0x38]);
-    drawText(rgba, CARD_W, CARD_H, "▶", (THUMB_W - textWidth("▶", 22)) / 2, 40, 22, DIM);
+    fillRect(rgba, W, H, 0, 0, tw2, th2, [0x1e, 0x2a, 0x38]);
+    drawText(rgba, W, H, "▶", (tw2 - textWidth("▶", 22 * s)) / 2, 40 * s, 22 * s, DIM);
   }
   // Duration badge on the thumbnail, bottom-right (the mockup chip).
   if (input.durationS > 0) {
     const label = fmtDuration(input.durationS);
-    const tw = Math.ceil(textWidth(label, 10));
-    const bx = THUMB_W - tw - 10;
-    fillRect(rgba, bx, THUMB_H - 16, tw + 8, 13, [0, 0, 0], 0.72);
-    drawText(rgba, CARD_W, CARD_H, label, bx + 4, THUMB_H - 6, 10, INK);
+    const tw = Math.ceil(textWidth(label, 10 * s));
+    const bx = tw2 - tw - 10 * s;
+    fillRect(rgba, W, H, bx, th2 - 16 * s, tw + 8 * s, 13 * s, [0, 0, 0], 0.72);
+    drawText(rgba, W, H, label, bx + 4 * s, th2 - 6 * s, 10 * s, INK);
   }
-  const tx = THUMB_W + 10;
-  const maxW = CARD_VISIBLE_W - tx - 26; // keep clear of the chevron
-  const lines = fitLines(input.title, 14, maxW, 2);
+  const tx = tw2 + 10 * s;
+  const maxW = CARD_VISIBLE_W * s - tx - 26 * s; // keep clear of the chevron
+  const lines = fitLines(input.title, 14 * s, maxW, 2);
   const views = input.views > 0 ? `${fmtViews(input.views)} views` : "";
   if (lines.length > 1) {
     // Two title lines: channel and views share the meta line.
-    drawText(rgba, CARD_W, CARD_H, lines[0], tx, 19, 14, INK);
-    drawText(rgba, CARD_W, CARD_H, lines[1], tx, 36, 14, INK);
+    drawText(rgba, W, H, lines[0], tx, 19 * s, 14 * s, INK);
+    drawText(rgba, W, H, lines[1], tx, 36 * s, 14 * s, INK);
     const meta = [input.channel, views].filter(Boolean).join(" · ");
-    drawText(rgba, CARD_W, CARD_H, fitLines(meta, 10, maxW, 1)[0] ?? "", tx, 55, 10, DIM);
+    drawText(rgba, W, H, fitLines(meta, 10 * s, maxW, 1)[0] ?? "", tx, 55 * s, 10 * s, DIM);
   } else {
     // The mockup layout: title / channel / views on their own lines.
-    drawText(rgba, CARD_W, CARD_H, lines[0] ?? "", tx, 21, 14, INK);
-    drawText(rgba, CARD_W, CARD_H, fitLines(input.channel, 10, maxW, 1)[0] ?? "", tx, 39, 10, DIM);
-    drawText(rgba, CARD_W, CARD_H, views, tx, 55, 10, DIM);
+    drawText(rgba, W, H, lines[0] ?? "", tx, 21 * s, 14 * s, INK);
+    drawText(rgba, W, H, fitLines(input.channel, 10 * s, maxW, 1)[0] ?? "", tx, 39 * s, 10 * s, DIM);
+    drawText(rgba, W, H, views, tx, 55 * s, 10 * s, DIM);
   }
-  drawText(rgba, CARD_W, CARD_H, "›", CARD_VISIBLE_W - 18, 39, 16, DIM);
-  roundCorners(rgba);
+  drawText(rgba, W, H, "›", (CARD_VISIBLE_W - 18) * s, 39 * s, 16 * s, DIM);
+  roundCorners(rgba, s);
   return rgba;
+}
+
+export function renderCard(input: CardInput): Promise<Uint8Array> {
+  return composeCard(input, 1);
+}
+
+/** Density-2 card: composed at 2x (1024x128) and split into two 512-wide
+ *  pow2 halves — TEX_MAX_DIM caps uploads at 512, so the app draws the pair
+ *  side by side at logical half-width for 1:1 texels on a density-2 panel. */
+export const CARD_HD_HALF_W = 512;
+export async function renderCardHD(
+  input: CardInput,
+): Promise<{ left: Uint8Array; right: Uint8Array }> {
+  const rgba = await composeCard(input, 2);
+  const w = CARD_W * 2;
+  const h = CARD_H * 2;
+  const half = (x0: number): Uint8Array => {
+    const out = new Uint8Array(CARD_HD_HALF_W * h * 4);
+    for (let y = 0; y < h; y++) {
+      out.set(
+        rgba.subarray((y * w + x0) * 4, (y * w + x0 + CARD_HD_HALF_W) * 4),
+        y * CARD_HD_HALF_W * 4,
+      );
+    }
+    return out;
+  };
+  return { left: half(0), right: half(CARD_HD_HALF_W) };
+}
+
+/** 2x2 box-average a 2x RGBA buffer down to 1x — the vita path fetches ONE
+ *  2x thumbnail and derives the classic 1x card from it. */
+export function downscale2(rgba: Uint8Array, w2: number, h2: number): Uint8Array {
+  const w = w2 >> 1;
+  const h = h2 >> 1;
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let c = 0; c < 4; c++) {
+        const a = rgba[((y * 2) * w2 + x * 2) * 4 + c];
+        const b = rgba[((y * 2) * w2 + x * 2 + 1) * 4 + c];
+        const d = rgba[((y * 2 + 1) * w2 + x * 2) * 4 + c];
+        const e = rgba[((y * 2 + 1) * w2 + x * 2 + 1) * 4 + c];
+        out[(y * w + x) * 4 + c] = (a + b + d + e + 2) >> 2;
+      }
+    }
+  }
+  return out;
 }
 
 /** App background behind the rows — corner masking must match it. */
@@ -314,20 +370,20 @@ const CORNER_R = 6;
  * background (antialiased against the true distance) is equivalent to a
  * rounded clip because rows always sit on that background.
  */
-function roundCorners(rgba: Uint8Array): void {
+function roundCorners(rgba: Uint8Array, s = 1): void {
   // Rounded-rect SDF over the visible area (pixel centers at +0.5): the
   // blend factor is the coverage OUTSIDE the pill, antialiased over 1px.
-  const hw = CARD_VISIBLE_W / 2 - CORNER_R;
-  const hh = CARD_H / 2 - CORNER_R;
-  for (let y = 0; y < CARD_H; y++) {
-    const qy = Math.abs(y + 0.5 - CARD_H / 2) - hh;
+  const hw = (CARD_VISIBLE_W * s) / 2 - CORNER_R * s;
+  const hh = (CARD_H * s) / 2 - CORNER_R * s;
+  for (let y = 0; y < CARD_H * s; y++) {
+    const qy = Math.abs(y + 0.5 - (CARD_H * s) / 2) - hh;
     if (qy <= 0) continue; // inside the vertical straight band — never clipped
-    for (let x = 0; x < CARD_VISIBLE_W; x++) {
-      const qx = Math.abs(x + 0.5 - CARD_VISIBLE_W / 2) - hw;
+    for (let x = 0; x < CARD_VISIBLE_W * s; x++) {
+      const qx = Math.abs(x + 0.5 - (CARD_VISIBLE_W * s) / 2) - hw;
       if (qx <= 0) continue;
-      const a = Math.min(1, Math.max(0, Math.hypot(qx, qy) - CORNER_R + 0.5));
+      const a = Math.min(1, Math.max(0, Math.hypot(qx, qy) - CORNER_R * s + 0.5));
       if (a <= 0) continue;
-      const o = (y * CARD_W + x) * 4;
+      const o = (y * CARD_W * s + x) * 4;
       rgba[o] = rgba[o] + (PAGE_BG[0] - rgba[o]) * a;
       rgba[o + 1] = rgba[o + 1] + (PAGE_BG[1] - rgba[o + 1]) * a;
       rgba[o + 2] = rgba[o + 2] + (PAGE_BG[2] - rgba[o + 2]) * a;
@@ -339,9 +395,13 @@ function roundCorners(rgba: Uint8Array): void {
 // Thumbnail fetch + decode (ffmpeg scale/crop; no freetype needed here)
 // ---------------------------------------------------------------------------
 
-/** Fetch a thumbnail and decode it to THUMB_W x THUMB_H RGBA via ffmpeg.
- *  Null on any failure — the card falls back to the placeholder panel. */
-export async function fetchThumbRGBA(url: string, tmpDir: string): Promise<Uint8Array | null> {
+/** Fetch a thumbnail and decode it to (THUMB_W x THUMB_H) * scale RGBA via
+ *  ffmpeg. Null on any failure — the card falls back to the placeholder. */
+export async function fetchThumbRGBA(
+  url: string,
+  tmpDir: string,
+  scale = 1,
+): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(8000),
@@ -361,7 +421,7 @@ export async function fetchThumbRGBA(url: string, tmpDir: string): Promise<Uint8
         "-i",
         tmp,
         "-vf",
-        `scale=${THUMB_W}:${THUMB_H}:force_original_aspect_ratio=increase,crop=${THUMB_W}:${THUMB_H}`,
+        `scale=${THUMB_W * scale}:${THUMB_H * scale}:force_original_aspect_ratio=increase,crop=${THUMB_W * scale}:${THUMB_H * scale}`,
         "-frames:v",
         "1",
         "-f",
@@ -373,7 +433,7 @@ export async function fetchThumbRGBA(url: string, tmpDir: string): Promise<Uint8
       { stdout: "pipe", stderr: "ignore" },
     );
     const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
-    if ((await proc.exited) !== 0 || bytes.length !== THUMB_W * THUMB_H * 4) return null;
+    if ((await proc.exited) !== 0 || bytes.length !== THUMB_W * THUMB_H * scale * scale * 4) return null;
     return bytes;
   } catch {
     return null;

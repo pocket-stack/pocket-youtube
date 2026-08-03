@@ -27,6 +27,10 @@ export interface ResultItem {
   channel: string;
   durationS: number;
   views: number;
+  /** Density-2 halves (two 512x128 CLUT8 IMGs drawn side by side at
+   *  logical half-width — 1:1 texels on a 2x panel). Sent only to devices
+   *  whose hello negotiated a density-2 profile. */
+  cardHD?: [string, string];
   /** svc-relative IMG-entry path for loadImgFile (256x64 card). */
   card: string;
 }

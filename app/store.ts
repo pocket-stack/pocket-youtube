@@ -112,9 +112,16 @@ export function createYoutubeStore() {
     });
   };
 
+  /** Touch made accidental double-activation easy (two spawned host
+   *  pipelines observed on hardware) — one play request in flight at a time;
+   *  taps while resolving are absorbed. */
+  let playPending = false;
   const play = (item: ResultItem): void => {
+    if (playPending) return;
+    playPending = true;
     setStatus("RESOLVING…");
     runEffect<HostMsg>("yt/play", { videoId: item.videoId }, (msg) => {
+      playPending = false;
       if (msg.t === "playing") {
         setStatus("");
         setPlayer({

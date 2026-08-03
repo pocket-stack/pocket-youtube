@@ -263,29 +263,50 @@ function LoadMoreRow(props: { active: boolean; busy: boolean }) {
   );
 }
 
-/** One host-rendered full-width result row (512x64 texture, 456 visible —
- *  the pow2 tail is clipped by the wrapper). The texture loads through the
- *  driver's one-per-frame queue and is freed with the row. */
+/** One host-rendered full-width result row. Classic hosts: a single 512x64
+ *  texture (456 visible — the pow2 tail is clipped by the wrapper).
+ *  Density-2 hosts: the host sends the SAME card as two 512x128 halves
+ *  (TEX_MAX_DIM caps uploads at 512) drawn side by side at logical
+ *  half-width — 1:1 texels on a 2x panel, sharp text. Textures load through
+ *  the driver's one-per-frame queue and are freed with the row. */
 function ResultRow(props: { item: ResultItem; active: boolean }) {
+  const hd = props.item.cardHD;
   const [handle, setHandle] = createSignal(-1);
+  const [handleR, setHandleR] = createSignal(-1);
   let node: NodeMirror | undefined;
+  let nodeR: NodeMirror | undefined;
   let alive = true;
 
-  loadCard(props.item.card, (h) => {
+  loadCard(hd ? hd[0] : props.item.card, (h) => {
     if (!alive) {
       if (h >= 0) getOps().freeTexture?.(h);
       return;
     }
     setHandle(h);
   });
+  if (hd) {
+    loadCard(hd[1], (h) => {
+      if (!alive) {
+        if (h >= 0) getOps().freeTexture?.(h);
+        return;
+      }
+      setHandleR(h);
+    });
+  }
   onCleanup(() => {
     alive = false;
     const h = handle();
     if (h >= 0) getOps().freeTexture?.(h);
+    const hr = handleR();
+    if (hr >= 0) getOps().freeTexture?.(hr);
   });
   createEffect(() => {
     const h = handle();
     if (h >= 0 && node) getOps().setImage(node.id, h);
+  });
+  createEffect(() => {
+    const hr = handleR();
+    if (hr >= 0 && nodeR) getOps().setImage(nodeR.id, hr);
   });
 
   return (
@@ -300,15 +321,22 @@ function ResultRow(props: { item: ResultItem; active: boolean }) {
           </View>
         }
       >
-        {/* Absolute: an IN-FLOW 512-wide image gets flex-shrunk to the 456
+        {/* Absolute: an IN-FLOW wide image gets flex-shrunk to the 456
             wrapper (observed on hardware as an 11% squeeze — the baked
             corner arcs drifted ~50px into the row). Out of flow it renders
             1:1 and the wrapper's scissor clips the pow2 tail. */}
         <Image
           nodeRef={(n) => (node = n)}
           class="absolute"
-          style={{ insetT: 0, insetL: 0, width: 512, height: 64 }}
+          style={{ insetT: 0, insetL: 0, width: hd ? 256 : 512, height: 64 }}
         />
+        <Show when={hd && handleR() >= 0}>
+          <Image
+            nodeRef={(n) => (nodeR = n)}
+            class="absolute"
+            style={{ insetT: 0, insetL: 256, width: 256, height: 64 }}
+          />
+        </Show>
       </Show>
       <FocusRing active={props.active} />
     </View>
