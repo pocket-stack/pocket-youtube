@@ -47,16 +47,40 @@
     "textureWidth": 256,
     "textureHeight": 64
   },
-  "classic-small-button": {
+  "classic-wide-button": {
+    "width": 304,
+    "height": 28,
+    "textureWidth": 512,
+    "textureHeight": 32
+  },
+  "classic-small-56": {
+    "width": 56,
+    "height": 26,
+    "textureWidth": 64,
+    "textureHeight": 32
+  },
+  "classic-small-68": {
     "width": 68,
     "height": 26,
     "textureWidth": 128,
     "textureHeight": 32
   },
-  "classic-wide-button": {
-    "width": 304,
-    "height": 28,
-    "textureWidth": 512,
+  "classic-small-70": {
+    "width": 70,
+    "height": 26,
+    "textureWidth": 128,
+    "textureHeight": 32
+  },
+  "classic-small-76": {
+    "width": 76,
+    "height": 26,
+    "textureWidth": 128,
+    "textureHeight": 32
+  },
+  "classic-small-152": {
+    "width": 152,
+    "height": 26,
+    "textureWidth": 256,
     "textureHeight": 32
   },
   "classic-play": {

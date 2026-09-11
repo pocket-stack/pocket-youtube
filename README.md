@@ -10,6 +10,12 @@ its pressed state on release; hold backspace to delete or hold space to move
 the cursor. Search results load ahead of the scroll position, with cached
 titles and thumbnails.
 
+**Hold a video row to save it on the 3DS SD card.** The Saved screen shows
+conversion progress, SD transfer progress and completed downloads. Saved
+videos play, pause and seek with the companion disconnected. **CC** opens
+caption controls and language selection; video downloads include the selected
+captions, and **Save captions to SD** exports a separate WebVTT file.
+
 <table>
   <tr><th>Search and automatic loading</th><th>Playback and browsing</th></tr>
   <tr>
@@ -163,8 +169,9 @@ PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `11cb83fb`**, including native 3DS media
-and shared touch-keyboard support. The PSP crate
+The framework is pinned to **PocketJS `3b39f4d3`**, including native 3DS media, an SD download worker, local seeking,
+timed captions and shared touch-keyboard support. **This build requires a new
+3DS launcher with host ABI 11.** The PSP crate
 and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
 the PSP build passes `-O2` for the C interpreter, matching the upstream
 toolchain. After changing branches or updating the submodule pins, run

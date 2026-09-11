@@ -16,7 +16,7 @@ export type DeviceCmd =
   | { t: "search"; id: number; q: string }
   /** Next batch of the LAST search; replies `results` with only NEW items. */
   | { t: "more"; id: number }
-  | { t: "play"; id: number; videoId: string; position?: number }
+  | { t: "play"; id: number; videoId: string; position?: number; track?: string }
   | { t: "pause"; id: number }
   | { t: "resume"; id: number }
   | { t: "seek"; id: number; to: number }
@@ -52,6 +52,10 @@ export type HostMsg =
       /** Seconds the stream's frame indices are based at (0 or the seek). */
       position: number;
       source?: MediaSource;
+      captionTrack?: string;
+      captionLabel?: string;
+      captionError?: string;
+      hasCaptions?: boolean;
     }
   | { t: "state"; id: number; playing: boolean; position: number }
   | { t: "ended" }

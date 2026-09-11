@@ -38,3 +38,13 @@ The script downloads the [trailer hosted by W3C](https://media.w3.org/2010/05/bu
 and uses seconds 9–21, without audio. It resizes and letterboxes the frames,
 embeds them in the application replay and converts the recording to GIF.
 Search titles and counts are sample data for the recording.
+
+## Caption controls and saved files
+
+`3ds-captions.png` shows the caption panel after an English WebVTT export;
+`3ds-caption-details.png` shows its saved file details. **Both are 320×240
+software renders from the application bundle**, produced by
+`test/dual-screen.test.ts` with fixture video metadata and media services.
+Run `bun run test:3ds` to reproduce the source images in `out/dual-screen/`.
+These images verify layout and state presentation; they do not record device
+input, decoding or SD storage.

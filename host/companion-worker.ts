@@ -3,6 +3,9 @@ import { createMediaStreamServer, mediaHeader } from "../vendor/pocketjs/tools/m
 import type { MediaSource } from "../vendor/pocketjs/contracts/spec/media.ts";
 import { search, resolve, thumbnailUrl, type ResolvedStream, type SearchItem } from "./yt.ts";
 import { nativeMedia } from "./native-media.ts";
+import { loadCaptions, withCaptions, type Captions } from "./captions.ts";
+import { createMediaDownloadServer } from "../vendor/pocketjs/tools/media-download.ts";
+import { createDownloadJobs } from "./download-jobs.ts";
 import { cardFont, drawText, fitLines, fmtDuration, fetchThumbRGBA, THUMB_W, THUMB_H } from "./cards.ts";
 
 import { createSearchPages } from "./search-pages.ts";
@@ -24,6 +27,9 @@ let nextJob = 1, query = "", page = 0, generation = 0;
 let resolved: ResolvedStream | undefined, active: MediaSource | undefined;
 let server: Awaited<ReturnType<typeof createMediaStreamServer>>;
 let init: Promise<void>;
+let downloads: ReturnType<typeof createDownloadJobs>;
+let selectedCaptions: string | undefined;
+let captionCache: { videoId: string; track?: string; value: Captions } | undefined;
 
 function stop() { generation++; if (active) server.revoke(active); active = undefined; }
 function job(work: () => Promise<unknown>) {
@@ -37,16 +43,24 @@ function job(work: () => Promise<unknown>) {
   });
   return { job: id };
 }
-async function play(videoId: string, position: number) {
+async function play(videoId: string, position: number, track?: string) {
   stop(); const owner = generation;
   const source = resolved?.videoId === videoId ? resolved : await resolve(videoId);
   if (owner !== generation) throw new Error("Playback superseded");
   resolved = source;
   items.set(videoId, { videoId, title: source.title, channel: source.channel, durationS: source.durationS, views: items.get(videoId)?.views ?? 0 });
   const seconds = Math.max(0, Math.min(Number.isFinite(position) ? position : 0, Math.max(0, source.durationS - 1)));
-  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000), signal => nativeMedia(source, seconds, signal));
+  let captions: Captions;
+  if (captionCache?.videoId === videoId && captionCache.track === track) captions = captionCache.value;
+  else {
+    try { captions = await loadCaptions(source.captionTracks ?? [], track); captionCache = { videoId, track, value: captions }; }
+    catch { captions = { cues: [], vtt: "", error: "Captions unavailable; retry CC" }; }
+  }
+  if (owner !== generation) throw new Error("Playback superseded");
+  selectedCaptions = track;
+  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000), signal => withCaptions(nativeMedia(source, seconds, signal), captions, Math.round(seconds * 1000)));
   return { t: "playing", videoId, title: source.title.slice(0, 160), durationS: source.durationS,
-    fps: 30, stream: active.token, source: active, position: seconds };
+    fps: 30, stream: active.token, source: active, position: seconds, captionTrack: captions.track?.id ?? track ?? source.captionTracks?.[0]?.id, captionLabel: captions.track?.label, captionError: captions.error, hasCaptions: !!source.captionTracks?.length };
 }
 async function results(q: string, count: number) {
   const found = await search(q, count * 5);
@@ -101,10 +115,10 @@ const methods = {
       }
       case "play":
         if (typeof cmd.videoId !== "string" || !/^[\w-]{11}$/.test(cmd.videoId)) throw new Error("Invalid video");
-        result = job(() => play(cmd.videoId, Number(cmd.position ?? 0))); break;
+        result = job(() => play(cmd.videoId, Number(cmd.position ?? 0), cmd.track)); break;
       case "seek":
         if (!resolved || !Number.isFinite(cmd.to)) throw new Error("No active video");
-        result = job(() => play(resolved!.videoId, cmd.to)); break;
+        result = job(() => play(resolved!.videoId, cmd.to, selectedCaptions)); break;
       case "stop": stop(); result = { t: "state", playing: false, position: 0 }; break;
       default: throw new Error("Unsupported command");
     }
@@ -134,12 +148,20 @@ const methods = {
     if (data.kind === "thumbnail") return JSON.stringify(classicArt.thumbnail(data.videoId));
     throw new Error("Unknown artwork rendition");
   },
+  "youtube.download": async (raw: string) => { await init; return JSON.stringify(downloads.command(JSON.parse(raw))); },
+  "youtube.caption-tracks": (raw: string) => {
+    const { videoId, offset = 0 } = JSON.parse(raw);
+    if (videoId !== resolved?.videoId || !Number.isInteger(offset) || offset < 0) throw new Error("No active video");
+    const tracks = resolved?.captionTracks ?? [];
+    return JSON.stringify({ tracks: tracks.slice(offset, offset + 8).map(({ id, label }) => ({ id, label })), more: offset + 8 < tracks.length });
+  },
   "youtube.metrics": (raw: string) => { console.log(`Playback ${raw}`); return "{}"; },
 };
 
 self.onmessage = event => {
   if (event.data.init) {
-    init = createMediaStreamServer({ advertiseHost: event.data.init.advertiseHost, log: console.error }).then(value => { server = value; });
+    init = Promise.all([createMediaStreamServer({ advertiseHost: event.data.init.advertiseHost, log: console.error }),
+      createMediaDownloadServer({ advertiseHost: event.data.init.advertiseHost })]).then(([stream, files]) => { server = stream; downloads = createDownloadJobs(files); });
     return;
   }
   void dispatchOffload(methods, event.data).then(reply => self.postMessage(reply));

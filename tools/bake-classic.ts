@@ -38,7 +38,13 @@ bake("classic-search-card",296,108,g=>{
   round(g,1.5,1.5,293,103,6);g.strokeStyle="#ffffff";g.stroke();
   g.fillStyle="#d4dae3";g.fillRect(1,69,294,1);g.fillStyle="#ffffff";g.fillRect(1,70,294,1);
 });
-for(const [name,w,h,blue] of [["classic-button",72,56,false],["classic-play-button",144,56,true],["classic-small-button",68,26,false],["classic-wide-button",304,28,false]] as const) {
+// Each cap has its optical width before power-of-two padding. Tile must use
+// the matching cap: clipping a 68 px cap into a narrower hit target loses its edge.
+const buttons: [string, number, number, boolean][] = [
+  ["classic-button",72,56,false], ["classic-play-button",144,56,true], ["classic-wide-button",304,28,false],
+  ...[56, 68, 70, 76, 152].map(w => [`classic-small-${w}`, w, 26, false] as [string, number, number, boolean]),
+];
+for(const [name,w,h,blue] of buttons) {
   bake(name,w,h,g=>{
     round(g,.5,1.5,w-1,h-2,6);g.fillStyle="#8f99a8";g.fill();
     round(g,.5,.5,w-1,h-3,6);g.fillStyle=gradient(g,h,blue?[[0,"#8bb7ed"],[.49,"#438add"],[.5,"#2d73c8"],[1,"#205ba6"]]:[[0,"#ffffff"],[.49,"#e9ecf1"],[.5,"#d6dce5"],[1,"#bdc6d2"]]);g.fill();

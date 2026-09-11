@@ -5,8 +5,10 @@ import type { DeviceCmd, HostMsg } from "./protocol.ts";
 type Work = { command: DeviceCmd; deliver: (message: HostMsg) => void; job: number; busy: boolean; deadline: number };
 const work = new Map<number, Work>();
 let frame = 0, session = 0;
+let streaming = false;
 let push: (message: HostMsg) => void = () => {};
 
+export function companionPlayback(remote: boolean) { streaming = remote; }
 export function companionConnected() { return offload().connected(); }
 export function companionPush(callback: typeof push) { push = callback; }
 
@@ -16,7 +18,7 @@ export function sendCompanion(command: DeviceCmd, deliver: Work["deliver"]) {
     mediaPlayer().pause(command.t === "pause");
     deliver({ t: "state", id: command.id, playing: command.t === "resume", position: mediaPlayer().status().positionMs / 1000 }); return;
   }
-  if (command.t === "stop") mediaPlayer().close();
+  if (command.t === "stop") streaming = false;
   const item: Work = { command, deliver, job: 0, busy: true, deadline: frame + 3600 };
   work.set(command.id, item);
   const request = offload().request("youtube.command", JSON.stringify(command), result => {
@@ -34,7 +36,8 @@ export function pumpCompanion() {
   frame++;
   const current = offload().session();
   if (session && current !== session) {
-    mediaPlayer().close();
+    if (streaming) mediaPlayer().close();
+    streaming = false;
     for (const item of [...work.values()]) finish(item, { t: "error", id: item.command.id, message: "offline" });
     push({ t: "offline" });
   }
