@@ -58,11 +58,11 @@ export function createYoutubeStore(browse?: SearchModel) {
   let playbackGeneration = 0;
 
   onHostPush((msg: HostMsg) => {
-    if (msg.t === "offline" && !(player()?.source && "file" in player()!.source!)) { setStatus("COMPANION DISCONNECTED — RECONNECTING"); setPhase("connect"); }
+    if (msg.t === "offline" && !(player()?.source && "file" in player()!.source!)) { setStatus("Companion disconnected. Reconnecting…"); setPhase("connect"); }
     if (msg.t === "playback-error" && player()?.stream === msg.stream) {
       setPlayer(null);
       setPhase("browse");
-      setStatus(`ERROR: ${msg.message}`);
+      setStatus(`Error: ${msg.message}`);
     }
     if (msg.t === "ended") {
       const p = player();
@@ -99,16 +99,16 @@ export function createYoutubeStore(browse?: SearchModel) {
     const q = query().trim();
     if (!q || searching()) return;
     setSearching(true);
-    setStatus("SEARCHING…");
+    setStatus("Searching…");
     runEffect<HostMsg>("yt/search", { q }, (msg) => {
       setSearching(false);
       if (msg.t === "results") {
         setResults(msg.items);
         setHasMore(msg.items.length > 0);
         if (msg.items.length > 0) setSearchSerial(searchSerial() + 1);
-        setStatus(msg.items.length === 0 ? "NO RESULTS" : "");
+        setStatus(msg.items.length === 0 ? "No results" : "");
       } else if (msg.t === "error") {
-        setStatus(msg.message === "offline" ? "HOST OFFLINE" : `ERROR: ${msg.message}`);
+        setStatus(msg.message === "offline" ? "Host offline" : `Error: ${msg.message}`);
         if (msg.message === "offline") setPhase("connect");
       }
     });
@@ -119,7 +119,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   const loadMore = (): void => {
     if (searching() || !hasMore()) return;
     setSearching(true);
-    setStatus("LOADING MORE…");
+    setStatus("Loading more…");
     runEffect<HostMsg>("yt/more", {}, (msg) => {
       setSearching(false);
       if (msg.t === "results") {
@@ -129,7 +129,7 @@ export function createYoutubeStore(browse?: SearchModel) {
         // focus repair pulls the focused index back onto the last real row.
         setStatus("");
       } else if (msg.t === "error") {
-        setStatus(`ERROR: ${msg.message}`);
+        setStatus(`Error: ${msg.message}`);
       }
     });
   };
@@ -144,7 +144,7 @@ export function createYoutubeStore(browse?: SearchModel) {
     setCaptionChange(reason === "caption" ? { track: track!, phase: "loading" } : null);
     playPending = true;
     const owner = ++playbackGeneration;
-    setStatus("RESOLVING…");
+    setStatus("Resolving…");
     runEffect<HostMsg>("yt/play", { videoId, position, track }, (msg) => {
       if (owner !== playbackGeneration) return;
       playPending = false;
@@ -167,7 +167,7 @@ export function createYoutubeStore(browse?: SearchModel) {
         setPlayReason(reason); setPlaySerial(playSerial() + 1);
         setPhase("player");
       } else if (msg.t === "error") {
-        setStatus(`ERROR: ${msg.message}`);
+        setStatus(`Error: ${msg.message}`);
         if (reason === "caption") setCaptionChange({ track: track!, phase: "error", message: "Could not switch captions. Try again." });
       }
     });
@@ -194,7 +194,7 @@ export function createYoutubeStore(browse?: SearchModel) {
       setPlayer({ ...p, source: { file: p.source.file, positionMs: Math.round(position * 1000) }, position, playing: true, ended: false });
       setPlayReason("seek"); setPlaySerial(playSerial() + 1); setStatus(""); return;
     }
-    if (p.source) { playPending = true; setStatus("SEEKING…"); }
+    if (p.source) { playPending = true; setStatus("Seeking…"); }
     setPlayer({ ...p, playing: true, ended: false });
     runEffect<HostMsg>("yt/seek", { to: Math.max(0, seconds) }, msg => {
       if (owner !== playbackGeneration) return;
@@ -203,7 +203,7 @@ export function createYoutubeStore(browse?: SearchModel) {
         if (msg.source) companionPlayback(true);
         setPlayer({ ...p, stream: msg.stream, source: msg.source, position: msg.position, playing: true, ended: false });
         setPlayReason("seek"); setPlaySerial(playSerial() + 1); setStatus("");
-      } else if (msg.t === "error") setStatus(`ERROR: ${msg.message}`);
+      } else if (msg.t === "error") setStatus(`Error: ${msg.message}`);
     });
   };
 

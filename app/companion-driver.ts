@@ -1,5 +1,6 @@
 import { offload } from "@pocketjs/framework/offload";
 import { mediaPlayer } from "@pocketjs/framework/media";
+import { hasFeature } from "@pocketjs/framework/platform";
 import type { DeviceCmd, HostMsg } from "./protocol.ts";
 
 type Work = { command: DeviceCmd; deliver: (message: HostMsg) => void; job: number; busy: boolean; deadline: number };
@@ -14,7 +15,8 @@ export function companionPush(callback: typeof push) { push = callback; }
 
 export function sendCompanion(command: DeviceCmd, deliver: Work["deliver"]) {
   if (!companionConnected()) { deliver({ t: "error", id: command.id, message: "offline" }); return; }
-  if (command.t === "pause" || command.t === "resume") {
+  // Native media (3DS) pauses on the device; the PSP's ring pauses at the companion.
+  if ((command.t === "pause" || command.t === "resume") && hasFeature("media.playback")) {
     mediaPlayer().pause(command.t === "pause");
     deliver({ t: "state", id: command.id, playing: command.t === "resume", position: mediaPlayer().status().positionMs / 1000 }); return;
   }
@@ -30,7 +32,13 @@ export function sendCompanion(command: DeviceCmd, deliver: Work["deliver"]) {
   });
   if (!request) finish(item, { t: "error", id: command.id, message: "Companion busy" });
 }
-function finish(item: Work, message: HostMsg) { work.delete(item.command.id); item.deliver(message); }
+function finish(item: Work, message: HostMsg) {
+  work.delete(item.command.id);
+  // A ring stream (no native media) starts polling the companion for its end.
+  if (message.t === "playing" && !message.source) streaming = true;
+  item.deliver(message);
+}
+let statusBusy = false;
 
 export function pumpCompanion() {
   frame++;
@@ -43,6 +51,17 @@ export function pumpCompanion() {
   }
   session = current;
   for (const item of [...work.values()]) if (frame >= item.deadline) finish(item, { t: "error", id: item.command.id, message: "Companion operation timed out" });
+  // The PSP's ring has no push channel: ask for its state every two seconds.
+  if (current && streaming && !hasFeature("media.playback") && !statusBusy && frame % 120 === 0) {
+    statusBusy = true;
+    const request = offload().request("youtube.command", JSON.stringify({ t: "status", id: 0 }), result => {
+      statusBusy = false;
+      if (!result.ok || !streaming) return;
+      const reply = JSON.parse(result.value) as HostMsg;
+      if (reply.t === "status" && reply.ended) { streaming = false; push({ t: "ended" }); }
+    });
+    if (!request) statusBusy = false;
+  }
   if (!current || frame % 20) return;
   for (const item of work.values()) {
     if (!item.job || item.busy) continue;

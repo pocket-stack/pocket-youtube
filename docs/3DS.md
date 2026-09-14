@@ -11,7 +11,8 @@ The layout follows the separated viewing and control areas in
 and the continuity guidance in Apple's
 [Designing for iPhone Duo](https://developer.apple.com/design/human-interface-guidelines/designing-for-iphone-duo).
 It uses explicit tiles sized for a 320×240 resistive touch display. Search uses
-30-pixel-high keyboard keys. This is an adaptation of those interaction
+the PocketJS system keyboard in its contact layout: 30-pixel-high keys on
+phone-style staggered rows. This is an adaptation of those interaction
 principles, not a reproduction of an iPhone interface.
 
 ## Install and connect
@@ -133,7 +134,8 @@ old stream. After a new authenticated session, the app resolves a fresh source
 and resumes its selected video at the remembered position.
 
 The lower screen uses baked silver navigation chrome, a fine gray texture,
-beveled transport buttons, white result rows and a light keyboard. Official
+beveled transport buttons, white result rows and the framework keyboard's
+classic theme. Official
 YouTube vector outlines are rasterized without changing their aspect ratio;
 `artwork/youtube/README.md` records their source and `bun run bake:classic`
 reproduces the assets.
@@ -167,24 +169,56 @@ downward velocity can add five rows of lookahead. Metadata uses the same
 resource scheduler as artwork, ahead of thumbnail work. Reconnect clears page
 state for the new companion session. No selectable pagination row is mounted.
 
-The search keyboard uses Clear's contact-owned press model with baked glossy
-key caps. Character keys receive no focus state. Release clears the pressed
-cap; backspace supports bounded repeat, and holding space enables
-caret dragging. The app reuses PocketJS's text-editing controller, virtual clock
-and shared hold controller. Shift, caps lock, numbers, symbols, search and
-hardware cancel remain local. Now Playing uses a baked arrow image rather than
-a Unicode icon outside the device font's coverage.
+The search keyboard is PocketJS's system keyboard (`@pocketjs/framework/osk`)
+rendered on the auxiliary surface with the `classic` theme. **The surface
+reports contacts, so the framework picks the staggered layout and the
+down-edge press model**: a character types on the down edge, release clears
+the pressed cap, backspace repeats while held, holding space drags the caret,
+and a second shift press within 0.35 s locks caps. The d-pad focus ring stays
+hidden until the first d-pad press. B cancels, START commits, L switches the
+number layer and R shifts. The keyboard remembers its layer and key across
+opens. Now Playing uses a baked arrow image rather than a Unicode icon outside
+the device font's coverage.
 
-PSP and Vita retain their existing color-card and stream adapters.
+PSP and Vita run the single-screen presentation with the same classic chrome:
+glossy title bar, white host-rendered rows with a blue selection wash, and the
+same keyboard in its grid layout for the d-pad. They retain their color-card
+and stream adapters.
 
 ## Capability ownership and validation
 
-The independent control screen is selected by `display.auxiliary`,
-`input.touch.auxiliary` and `media.playback`. Application UI code does not call
-MVD, NDSP or device SDK functions. Shared store actions, source resolution,
-search, card text rasterization and scrubber state serve both presentations.
-`pocket.3ds.json` declares native screen geometry; `pocket.json` retains the
-480×272 PSP/Vita presentation.
+One `pocket.json` describes every device. **Its `dual-screen` presentation
+is addressed to the modality `{ "screens": 2, "touch": "auxiliary" }`**: the
+resolver derives the 3DS profile's modality, selects that entry
+(`app/main-dual.tsx`), resolves its 400×240 top and 320×240 auxiliary
+viewports, and admits `display.auxiliary`, `input.touch.auxiliary`,
+`media.playback` and `io.offload` on top of the app-level capabilities. The
+PSP and Vita derive to one screen and compile the baseline `app/main.tsx`.
+The compiler walks each bundle from its entry, so the 3DS artwork and the
+PSP card code never share a bundle. Application UI code does not call MVD,
+NDSP or device SDK functions. Shared store actions, source resolution,
+search, card text rasterization and scrubber state serve both presentations
+(`docs/MODALITY.md` in PocketJS states the model).
+
+**Saved and caption controls are out of both presentations until the PSP
+can match them.** The New 3DS host provides `media.playback` and the SD
+worker they need; the PSP host streams a bounded CLUT8 ring from the
+companion and has no media library, no complete-file container and no
+memory-stick writer. The download and caption code stays in the store and
+the companion worker; the presentations do not mount it. Adding the feature
+back means those three PSP host pieces first, then the same
+`mediaLibrary()` calls on both devices.
+
+**One companion data layer serves both devices.** `host/companion-worker.ts`
+answers search pages (`youtube.search`), artwork (`youtube.artwork`) and
+playback commands over PocketJS offload. The 3DS reaches it over TCP
+(`bun run serve:3ds`); the PSP reaches the same worker over the PSPLINK
+share through the USB offload provider (`bun run serve:psp`), where cards
+are 512×64 IMG side files the device loads natively and video is the
+`.pkst` ring under `pocket-svc/youtube/`. Rows on both devices are
+demand-driven resources requested for the list's visible window
+(`ClassicList.onWindow`), so a d-pad walk to the end pages in without a
+sentinel press.
 
 PocketJS owns native media playback, ticketed streaming, the bounded audio
 format, surface-aware keyboards, auxiliary WASM rendering, resource lifetime

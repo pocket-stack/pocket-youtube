@@ -1,6 +1,8 @@
 import { createMemo, createSignal, type Accessor } from "solid-js";
+import { runEffect } from "@pocketjs/framework/effects";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { offload } from "@pocketjs/framework/offload";
+import type { HostMsg } from "./protocol.ts";
 import { createResourceView, type createResourceRuntime } from "@pocketjs/framework/resource-view";
 import { offloadResource } from "@pocketjs/framework/resource-offload";
 import type { ResultItem } from "./protocol.ts";
@@ -68,6 +70,44 @@ export function createCompanionSearch(runtime: ReturnType<typeof createResourceR
       // One page of base lookahead, with a bounded extra page for downward flings.
       const lead = 3 + Math.min(5, Math.ceil(Math.max(0, velocity) * .6 / 64));
       if (first + visible + lead >= results().length) setWanted(results().length);
+    },
+  };
+}
+
+/** The legacy mailbox transport (Vita over TCP, the browser dev host): one
+ *  `yt/search` effect per query, `yt/more` for the next page. The same
+ *  SearchModel shape as the companion pages, so a presentation reads one
+ *  interface; `prefetch` asks for the next page as the window nears the end. */
+export function createLegacySearch(): SearchModel {
+  const [query, setQuery] = createSignal(""), [results, setResults] = createSignal<ResultItem[]>([]);
+  const [searching, setSearching] = createSignal(false), [hasMore, setHasMore] = createSignal(false);
+  const [error, setError] = createSignal(""), [serial, setSerial] = createSignal(0);
+  let active = "";
+  const deliver = (fresh: boolean) => (msg: HostMsg) => {
+    setSearching(false);
+    if (msg.t === "results") {
+      setResults(fresh ? msg.items : [...results(), ...msg.items]);
+      setHasMore(msg.items.length > 0);
+      if (fresh && msg.items.length > 0) setSerial(n => n + 1);
+      setError(fresh && msg.items.length === 0 ? "No videos found" : "");
+    } else if (msg.t === "error") setError(msg.message === "offline" ? "Host offline" : `Error: ${msg.message}`);
+  };
+  const loadMore = () => {
+    if (!active || searching() || !hasMore()) return;
+    setSearching(true);
+    runEffect<HostMsg>("yt/more", {}, deliver(false));
+  };
+  return {
+    query, setQuery, results, searching, hasMore, searchSerial: serial,
+    status: createMemo(() => error() || (searching() ? results().length ? "Loading videos…" : "Searching…" : "")),
+    search() {
+      const q = query().trim(); if (!q || searching()) return;
+      active = q; setSearching(true); setError(""); setResults([]); setHasMore(false);
+      runEffect<HostMsg>("yt/search", { q }, deliver(true));
+    },
+    loadMore,
+    prefetch(first, visible) {
+      if (first + visible + 2 >= results().length) loadMore();
     },
   };
 }

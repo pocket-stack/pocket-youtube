@@ -1,12 +1,17 @@
 import { dispatchOffload } from "../vendor/pocketjs/tools/offload-provider.ts";
-import { createMediaStreamServer, mediaHeader } from "../vendor/pocketjs/tools/media-stream.ts";
+import { createMediaStreamServer, mediaHeader, type MediaPacket } from "../vendor/pocketjs/tools/media-stream.ts";
 import type { MediaSource } from "../vendor/pocketjs/contracts/spec/media.ts";
 import { search, resolve, thumbnailUrl, type ResolvedStream, type SearchItem } from "./yt.ts";
 import { nativeMedia } from "./native-media.ts";
 import { loadCaptions, withCaptions, type Captions } from "./captions.ts";
 import { createMediaDownloadServer } from "../vendor/pocketjs/tools/media-download.ts";
 import { createDownloadJobs } from "./download-jobs.ts";
-import { cardFont, drawText, fitLines, fmtDuration, fetchThumbRGBA, THUMB_W, THUMB_H } from "./cards.ts";
+import { cardFont, drawText, fitLines, fmtDuration, fetchThumbRGBA, renderCard, CARD_W, CARD_H, THUMB_W, THUMB_H } from "./cards.ts";
+import { encodeImgT8 } from "./img.ts";
+import { PlaySession } from "./media.ts";
+import { PSP_PROFILE } from "./profiles.ts";
+import { FileRingSink } from "./sink.ts";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 import { createSearchPages } from "./search-pages.ts";
 import { createClassicArt } from "./classic-art.ts";
@@ -28,6 +33,68 @@ let resolved: ResolvedStream | undefined, active: MediaSource | undefined;
 let server: Awaited<ReturnType<typeof createMediaStreamServer>>;
 let init: Promise<void>;
 let downloads: ReturnType<typeof createDownloadJobs>;
+/** USB mode: the host0 share the PSP mounts; side files land under it. */
+let svcDir: string | undefined;
+/** The device the hello named; a PSP takes the ring, everything else TCP media. */
+let deviceTarget = "";
+/** The PSP's ring session and its side-file path (`media/play-N.pkst`). */
+let ring: PlaySession | null = null, ringPath = "", ringSerial = 0, ringEnded = false;
+const cards = new Map<string, Promise<{ file: string; width: number; height: number }>>();
+const RETRYABLE_MEDIA_RING = /timed out|Connection (refused|reset)|Network is unreachable|Input\/output error/i;
+
+function ringGeometry(durationS: number) {
+  return { ...PSP_PROFILE.geometry, totalFrames: Math.max(0, Math.round(durationS * PSP_PROFILE.fps)) };
+}
+/** The PSP path: resolve, stream into a ring file under the svc dir, and
+ *  hand the device the ring's svc-relative path for videoOpen. A stall
+ *  before the first frame re-resolves onto a fresh node, like the TCP path. */
+async function playRing(videoId: string, seconds: number) {
+  ring?.close(); ring = null; ringEnded = false;
+  let stream = resolved?.videoId === videoId ? resolved : await resolve(videoId);
+  resolved = stream;
+  for (let attempt = 0; ; attempt++) {
+    ringPath = `media/play-${++ringSerial}.pkst`;
+    const session = new PlaySession(stream, new FileRingSink(svcDir!, ringPath, ringGeometry(stream.durationS)), {
+      onEnd: () => { if (ring === session) ringEnded = true; },
+      onError: (message) => { console.error(`playback failed: ${message}`); if (ring === session) { ring = null; ringEnded = true; } },
+    });
+    ring = session;
+    try {
+      if (seconds > 0) session.seek(seconds);
+      await session.ready;
+      break;
+    } catch (error) {
+      session.close(); if (ring === session) ring = null;
+      if (attempt >= 2 || !RETRYABLE_MEDIA_RING.test(String(error))) throw error;
+      console.error(`  attempt ${attempt + 1} stalled before the first frame; re-resolving`);
+      stream = await resolve(videoId); resolved = stream;
+    }
+  }
+  items.set(videoId, { videoId, title: stream.title, channel: stream.channel, durationS: stream.durationS, views: items.get(videoId)?.views ?? 0 });
+  return { t: "playing", videoId, title: stream.title.slice(0, 160), durationS: stream.durationS, fps: PSP_PROFILE.fps,
+    stream: ringPath, position: ring?.positionBase ?? seconds, hasCaptions: false };
+}
+/** The PSP's 512×64 card as an IMG side file: rendered once per video,
+ *  loaded natively by the device (loadImgFile), never through a record. */
+function cardFile(videoId: string) {
+  let promise = cards.get(videoId);
+  if (!promise) {
+    promise = (async () => {
+      const item = items.get(videoId);
+      if (!item) throw new Error("Unknown result");
+      let thumb: Uint8Array | null = null;
+      try { thumb = await fetchThumbRGBA(thumbnailUrl(videoId), `${svcDir}/thumbs`); } catch { /* the card keeps its placeholder */ }
+      const rgba = await renderCard({ title: item.title, channel: item.channel, durationS: item.durationS, views: item.views, thumbRgba: thumb });
+      const file = `thumbs/${videoId}.img`;
+      writeFileSync(`${svcDir}/${file}`, encodeImgT8(rgba, CARD_W, CARD_H));
+      return { file, width: CARD_W, height: CARD_H };
+    })();
+    cards.set(videoId, promise);
+    promise.catch(() => cards.delete(videoId));
+    if (cards.size > 96) cards.delete(cards.keys().next().value!);
+  }
+  return promise;
+}
 let selectedCaptions: string | undefined;
 let captionCache: { videoId: string; track?: string; value: Captions } | undefined;
 
@@ -42,6 +109,25 @@ function job(work: () => Promise<unknown>) {
     if (jobs.has(id)) jobs.set(id, { state: "error", message: "Source unavailable; retry playback or search" });
   });
   return { job: id };
+}
+/** A googlevideo edge node the resolver hands out can stall the first
+ *  request through the Mac's network path while the next node answers at
+ *  once; a stream that dies before its first packet with a timeout is
+ *  re-resolved (fresh URLs, a fresh node) up to twice before it fails. */
+const RETRYABLE_MEDIA = /timed out|Connection (refused|reset)|Network is unreachable|Input\/output error/i;
+async function* retryingMedia(source: ResolvedStream, seconds: number, signal: AbortSignal, reresolve: () => Promise<ResolvedStream>): AsyncGenerator<MediaPacket> {
+  for (let attempt = 0; ; attempt++) {
+    let yielded = false;
+    try {
+      for await (const packet of nativeMedia(source, seconds, signal)) { yielded = true; yield packet; }
+      return;
+    } catch (error) {
+      if (yielded || attempt >= 2 || signal.aborted || !RETRYABLE_MEDIA.test(String(error))) throw error;
+      console.error(`media: attempt ${attempt + 1} stalled before the first packet; re-resolving ${source.videoId}`);
+      source = await reresolve();
+      if (signal.aborted) return;
+    }
+  }
 }
 async function play(videoId: string, position: number, track?: string) {
   stop(); const owner = generation;
@@ -58,7 +144,8 @@ async function play(videoId: string, position: number, track?: string) {
   }
   if (owner !== generation) throw new Error("Playback superseded");
   selectedCaptions = track;
-  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000), signal => withCaptions(nativeMedia(source, seconds, signal), captions, Math.round(seconds * 1000)));
+  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000),
+    signal => withCaptions(retryingMedia(source, seconds, signal, async () => { resolved = await resolve(videoId); return resolved; }), captions, Math.round(seconds * 1000)));
   return { t: "playing", videoId, title: source.title.slice(0, 160), durationS: source.durationS,
     fps: 30, stream: active.token, source: active, position: seconds, captionTrack: captions.track?.id ?? track ?? source.captionTracks?.[0]?.id, captionLabel: captions.track?.label, captionError: captions.error, hasCaptions: !!source.captionTracks?.length };
 }
@@ -101,7 +188,14 @@ const methods = {
     const cmd = JSON.parse(raw);
     let result: unknown;
     switch (cmd.t) {
-      case "hello": result = { t: "ready" }; break;
+      case "hello": deviceTarget = typeof cmd.device?.target === "string" ? cmd.device.target : ""; result = { t: "ready" }; break;
+      case "status":
+        result = svcDir
+          ? { t: "status", playing: !!ring && !ringEnded, position: ring?.positionBase ?? 0, ended: ringEnded }
+          : { t: "status", playing: !!active, position: 0, ended: false };
+        break;
+      case "pause": ring?.pause(); result = { t: "state", playing: false, position: ring?.positionBase ?? 0 }; break;
+      case "resume": ring?.resume(); result = { t: "state", playing: !!ring, position: ring?.positionBase ?? 0 }; break;
       case "search": {
         if (typeof cmd.q !== "string" || !cmd.q.trim() || cmd.q.length > 200) throw new Error("Invalid search");
         const playingItem = resolved ? items.get(resolved.videoId) : undefined;
@@ -115,11 +209,16 @@ const methods = {
       }
       case "play":
         if (typeof cmd.videoId !== "string" || !/^[\w-]{11}$/.test(cmd.videoId)) throw new Error("Invalid video");
-        result = job(() => play(cmd.videoId, Number(cmd.position ?? 0), cmd.track)); break;
+        result = job(() => svcDir ? playRing(cmd.videoId, Number(cmd.position ?? 0)) : play(cmd.videoId, Number(cmd.position ?? 0), cmd.track)); break;
       case "seek":
         if (!resolved || !Number.isFinite(cmd.to)) throw new Error("No active video");
+        if (svcDir) {
+          if (ring) { ring.seek(Math.max(0, cmd.to)); ringEnded = false; result = { t: "state", playing: true, position: ring.positionBase }; }
+          else result = job(() => playRing(resolved!.videoId, Math.max(0, cmd.to)));
+          break;
+        }
         result = job(() => play(resolved!.videoId, cmd.to, selectedCaptions)); break;
-      case "stop": stop(); result = { t: "state", playing: false, position: 0 }; break;
+      case "stop": stop(); ring?.close(); ring = null; ringEnded = false; result = { t: "state", playing: false, position: 0 }; break;
       default: throw new Error("Unsupported command");
     }
     return JSON.stringify(result);
@@ -144,8 +243,12 @@ const methods = {
   "youtube.artwork": async (raw: string) => {
     const data = JSON.parse(raw), item = items.get(data.videoId);
     if (!item) throw new Error("Unknown result");
-    if (data.kind === "text") return JSON.stringify(await classicArt.text(item));
+    if (data.kind === "text") return JSON.stringify(await classicArt.text(item, Number.isInteger(data.width) ? data.width : 192));
     if (data.kind === "thumbnail") return JSON.stringify(classicArt.thumbnail(data.videoId));
+    if (data.kind === "card") {
+      if (!svcDir) throw new Error("Card side files need the USB share");
+      return JSON.stringify(await cardFile(data.videoId));
+    }
     throw new Error("Unknown artwork rendition");
   },
   "youtube.download": async (raw: string) => { await init; return JSON.stringify(downloads.command(JSON.parse(raw))); },
@@ -160,8 +263,17 @@ const methods = {
 
 self.onmessage = event => {
   if (event.data.init) {
-    init = Promise.all([createMediaStreamServer({ advertiseHost: event.data.init.advertiseHost, log: console.error }),
-      createMediaDownloadServer({ advertiseHost: event.data.init.advertiseHost })]).then(([stream, files]) => { server = stream; downloads = createDownloadJobs(files); });
+    if (typeof event.data.init.directory === "string") {
+      // USB mode (PSP): no media servers; side files under the host0 share.
+      svcDir = `${event.data.init.directory}/pocket-svc/youtube`;
+      for (const sub of ["thumbs", "media"]) if (!existsSync(`${svcDir}/${sub}`)) mkdirSync(`${svcDir}/${sub}`, { recursive: true });
+      init = Promise.resolve();
+    } else {
+      init = Promise.all([createMediaStreamServer({ advertiseHost: event.data.init.advertiseHost, log: console.error }),
+        createMediaDownloadServer({ advertiseHost: event.data.init.advertiseHost })]).then(([stream, files]) => { server = stream; downloads = createDownloadJobs(files); });
+    }
+    // The USB provider waits for this before it publishes its heartbeat.
+    void init.then(() => self.postMessage({ ready: true }));
     return;
   }
   void dispatchOffload(methods, event.data).then(reply => self.postMessage(reply));

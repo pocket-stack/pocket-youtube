@@ -4,17 +4,31 @@
   "id": "dev.pocket-stack.youtube",
   "name": "pocket-youtube",
   "title": "Pocket YouTube",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "engine": {
     "capabilities": {
       "requires": ["text.glyphs.baked", "input.buttons"],
-      "enhances": ["input.touch", "input.cursor", "input.analog.left"]
+      "enhances": ["input.touch", "input.cursor", "input.analog.left", "io.offload"]
     }
   },
   "app": {
     "entry": "app/main.tsx",
     "output": "main",
     "framework": "solid",
-    "viewport": { "logical": [480, 272], "presentation": "integer-fit" }
+    "viewport": { "logical": [480, 272], "presentation": "integer-fit" },
+    "presentations": [
+      {
+        "id": "dual-screen",
+        "entry": "app/main-dual.tsx",
+        "output": "pocket-youtube",
+        "modality": { "screens": 2, "touch": "auxiliary" },
+        "viewport": { "fixed": { "logical": [400, 240], "presentation": "native" } },
+        "surfaces": { "auxiliary": { "fixed": { "logical": [320, 240], "presentation": "native" } } },
+        "capabilities": {
+          "requires": ["display.auxiliary", "input.touch.auxiliary", "media.playback", "io.offload"],
+          "enhances": ["input.analog.right"]
+        }
+      }
+    ]
   }
 }

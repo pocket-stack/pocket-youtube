@@ -11,7 +11,8 @@
 // Pocket's shared, versioned toolchain cache.
 
 import { $ } from "bun";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { resolvePspBuildToolchain } from "../vendor/pocketjs/tools/psp-toolchain.ts";
 import {
   compilePocketTarget,
@@ -23,6 +24,11 @@ const crateDir = `${repo}crates/pocket-youtube-psp/`;
 
 const argv = Bun.argv.slice(2);
 const release = argv.includes("-r") || argv.includes("--release");
+
+function offloadSlot(inputs: { app: { id: string } }): string {
+  const plan = JSON.parse(readFileSync(`${repo}.pocket/psp/plan.json`, "utf8")) as { features: Record<string, boolean> };
+  return plan.features["io.offload"] ? createHash("sha256").update(inputs.app.id).digest("hex").slice(0, 16) : "";
+}
 
 // ---- 1. app bundle + pak -> dist/main.js + dist/main.pak ------------------
 console.log("pocket-youtube psp: resolving, checking, and compiling pocket.json");
@@ -65,6 +71,10 @@ const env = {
   // The app crate and pocketjs-psp dependency consume the exact contract
   // already embedded in the JS bundle.
   ...nativePlanEnvironment(plan),
+  // The host's offload worker polls host0:/pocket-offload/<slot>/ where
+  // <slot> is the app id's SHA-256 prefix — the same slot the USB provider
+  // derives (tools/offload-usb-provider.ts usbSlot). Empty disables it.
+  POCKETJS_OFFLOAD_SLOT: offloadSlot(plan),
 };
 
 const cargoArgs: string[] = release ? ["--release"] : [];

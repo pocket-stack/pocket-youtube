@@ -4,9 +4,13 @@ import { quantize } from "./quant.ts";
 import { thumbnailUrl, type SearchItem } from "./yt.ts";
 import { proxyUrl } from "./proxy.ts";
 
-export async function titleArt(item: Pick<SearchItem, "title" | "channel">) {
+/** Title and channel as 2-bit coverage, `width` px wide (a multiple of 4,
+ *  at most 8192 pixels in all): 192 for a 320-wide screen, 204 for 480 (the
+ *  widest whose reply fits the 2,500-character offload payload budget). */
+export async function titleArt(item: Pick<SearchItem, "title" | "channel">, width = 192) {
   await cardFont();
-  const width = 192, height = 36, rgba = new Uint8Array(width * height * 4);
+  if (!Number.isInteger(width) || width < 64 || width > 512 || width % 4 || width * 36 > 8192) throw new Error("Invalid title width");
+  const height = 36, rgba = new Uint8Array(width * height * 4);
   fitLines(item.title, 12, width, 2).forEach((line, row) => drawText(rgba, width, height, line, 0, 12 + row * 13, 12, [255, 255, 255]));
   drawText(rgba, width, height, fitLines(item.channel, 9, width, 1)[0] || "", 0, 35, 9, [170, 170, 170]);
   const packed = Buffer.alloc(width * height / 4);
@@ -45,10 +49,10 @@ export function createClassicArt(download = fetchThumbnail) {
   const thumbnails = new Map<string, Entry>(), titles = new Map<string, Promise<Awaited<ReturnType<typeof titleArt>>>>();
   let active = 0;
   return {
-    async text(item: Pick<SearchItem, "title" | "channel">) {
-      const key = JSON.stringify([item.title, item.channel]);
+    async text(item: Pick<SearchItem, "title" | "channel">, width = 192) {
+      const key = JSON.stringify([item.title, item.channel, width]);
       let value = titles.get(key);
-      if (!value) { value = titleArt(item); titles.set(key, value); }
+      if (!value) { value = titleArt(item, width); titles.set(key, value); }
       else { titles.delete(key); titles.set(key, value); }
       while (titles.size > 64) titles.delete(titles.keys().next().value!);
       return value;

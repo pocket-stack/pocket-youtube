@@ -5,10 +5,20 @@ YouTube on PSP, PS Vita and New Nintendo 3DS, with a Mac companion.
 ## New Nintendo 3DS
 
 Watch on the **400×240 upper display** and use the **320×240 touch display**
-for search, browsing and playback controls. The iOS-inspired keyboard clears
-its pressed state on release; hold backspace to delete or hold space to move
-the cursor. Search results load ahead of the scroll position, with cached
-titles and thumbnails.
+for search, browsing and playback controls. The PocketJS system keyboard runs
+in its contact layout on the touch display: keys type on the down edge, hold
+backspace to delete, hold space to move the cursor. Search results load ahead
+of the scroll position, with cached titles and thumbnails.
+
+One `pocket.json` serves every device. Its `dual-screen` presentation is
+addressed to the two-screen modality; the PSP and Vita compile the
+single-screen baseline with the same classic chrome and the same keyboard in
+its d-pad grid layout. **Both presentations run on one companion data
+layer**: search pages and row artwork are demand-driven resources the list
+requests for its visible window, and the presentations declare their button
+intents once (`useActions`) so the footer legend and the bottom-screen tiles
+come from the same declaration. Saved videos and caption controls are out of
+the 3DS presentation until the PSP host can match them.
 
 **Hold a video row to save it on the 3DS SD card.** The Saved screen shows
 conversion progress, SD transfer progress and completed downloads. Saved
@@ -60,8 +70,9 @@ The PSP's 802.11b radio cannot reach the modern web, so the app splits at the
 network boundary: a Mac companion process owns DNS, TLS, yt-dlp and H.264,
 and the handheld — running [PocketJS](https://github.com/pocket-stack/pocketjs) —
 owns presentation: a 60 Hz Solid UI, a 512×128 CLUT8 video plane at 12 fps,
-and a 44.1 kHz audio thread. Search with the system on-screen keyboard,
-browse host-rendered rows (CJK titles included), play, pause, seek.
+and a 44.1 kHz audio thread. Search with the system on-screen keyboard (the
+d-pad grid, which reopens on the key you left), browse host-rendered rows (CJK
+titles included) under the classic light chrome, play, pause, seek.
 
 The full engineering story — the `.pkst` ring container you can `ls`, the
 per-frame palette quantization, the GPU race that only real silicon could
@@ -116,16 +127,19 @@ bun run psp -r       # → dist/EBOOT.PBP
 # terminal 1 — mount a directory on the PSP as host0:
 usbhostfs_pc -b 10000 <your usbhostfs root>
 
-# terminal 2 — the companion service (network + pixels)
-bun run serve -- --dir <your usbhostfs root>
+# terminal 2 — the companion over the share: offload records under
+# pocket-offload/, cards and the video ring under pocket-svc/youtube/
+bun run serve:psp -- --dir <your usbhostfs root>
 
 # run the EBOOT on the device (XMB from a Memory Stick, or ldstart the
 # .prx from crates/pocket-youtube-psp/target/... over PSPLINK)
 ```
 
-The app boots to `CONNECT USB`, handshakes with the service through the
-mailbox, and you are searching. `△` opens the keyboard, `START` searches,
-`○` plays, `◁/▷` seek ±10 s.
+The app boots to `Connect USB`, handshakes with the companion, and you are
+searching. `△` opens the keyboard, `START` searches, `○` plays, `L/R` and
+`◁/▷` seek ±10 s, `×` leaves the player. The footer states the live legend.
+`bun run serve` remains the legacy mailbox companion for the Vita's TCP
+transport and the browser dev host.
 
 ## PS Vita
 
@@ -169,8 +183,9 @@ PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `3b39f4d3`**, including native 3DS media, an SD download worker, local seeking,
-timed captions and shared touch-keyboard support. **This build requires a new
+The framework is pinned to **PocketJS `6da4809e`**, including native 3DS media, an SD download worker, local seeking,
+timed captions, device modality with manifest presentations, and the
+modality-aware system keyboard. **This build requires a new
 3DS launcher with host ABI 11.** The PSP crate
 and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
 the PSP build passes `-O2` for the C interpreter, matching the upstream

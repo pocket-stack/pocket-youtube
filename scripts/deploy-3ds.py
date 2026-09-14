@@ -17,7 +17,7 @@ binary = root / "dist/3ds/pocket-youtube.3dsx"
 data = binary.read_bytes()
 if b"pocketjs-captures" in data:
     raise RuntimeError("Rebuild without --capture before installing for manual acceptance")
-manifest = json.loads((root / "pocket.3ds.json").read_text())
+manifest = json.loads((root / "pocket.json").read_text())
 slot = hashlib.sha256(manifest["id"].encode()).hexdigest()[:16]
 if ("offload/" + slot + ".key").encode() not in data:
     raise RuntimeError("Launcher does not contain this application's pairing slot")

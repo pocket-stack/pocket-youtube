@@ -194,34 +194,47 @@ async function doMore(id: number, ctx: TransportCtx): Promise<HostMsg> {
   return { t: "results", id, items };
 }
 
+/** A googlevideo edge node can stall the first request through the Mac's
+ *  network path while the next node answers at once. A session that fails
+ *  before its first frame with a timeout is re-resolved (fresh URLs, a
+ *  fresh node) up to twice before the error reaches the device. */
+const RETRYABLE_MEDIA = /timed out|Connection (refused|reset)|Network is unreachable|Input\/output error/i;
+
 async function doPlay(id: number, videoId: string, ctx: TransportCtx): Promise<HostMsg> {
   console.log(`play: ${videoId} (${ctx.profile.name} profile)`);
   session?.close();
   session = null;
-  const stream = await resolveVideo(videoId);
-  const rel = `media/play-${++playSerial}.pkst`;
-  const totalFrames = Math.max(0, Math.round(stream.durationS * ctx.profile.fps));
-  const sink = ctx.makeSink(rel, totalFrames);
-  const playing = new PlaySession(stream, sink, {
-    onEnd: () => {
-      if (session === playing) ctx.post({ t: "ended" });
-    },
-    onError: (message) => {
-      if (session !== playing) return;
-      console.error(`playback failed: ${message}`);
-      ctx.post({ t: "playback-error", stream: rel, message: message.slice(0, 300) });
+  let stream = await resolveVideo(videoId);
+  let rel = "";
+  for (let attempt = 0; ; attempt++) {
+    rel = `media/play-${++playSerial}.pkst`;
+    const totalFrames = Math.max(0, Math.round(stream.durationS * ctx.profile.fps));
+    const sink = ctx.makeSink(rel, totalFrames);
+    const playing = new PlaySession(stream, sink, {
+      onEnd: () => {
+        if (session === playing) ctx.post({ t: "ended" });
+      },
+      onError: (message) => {
+        if (session !== playing) return;
+        console.error(`playback failed: ${message}`);
+        ctx.post({ t: "playback-error", stream: rel, message: message.slice(0, 300) });
+        playing.close();
+        session = null;
+      },
+    });
+    session = playing;
+    try {
+      await playing.ready;
+      if (session !== playing) throw new Error("Playback cancelled");
+      break;
+    } catch (error) {
       playing.close();
-      session = null;
-    },
-  });
-  session = playing;
-  try {
-    await playing.ready;
-    if (session !== playing) throw new Error("Playback cancelled");
-  } catch (error) {
-    playing.close();
-    if (session === playing) session = null;
-    throw error;
+      const cancelled = session !== playing;
+      if (session === playing) session = null;
+      if (cancelled || attempt >= 2 || !RETRYABLE_MEDIA.test(String(error))) throw error;
+      console.error(`  attempt ${attempt + 1} stalled before the first frame; re-resolving`);
+      stream = await resolveVideo(videoId);
+    }
   }
   console.log(`  streaming "${stream.title}" (${stream.durationS}s) -> ${rel}`);
   return {
@@ -282,6 +295,9 @@ async function dispatch(cmd: DeviceCmd, ctx: TransportCtx): Promise<HostMsg | nu
       session?.close();
       session = null;
       return { t: "state", id: cmd.id, playing: false, position: 0 };
+    case "status":
+      // The mailbox pushes `ended` itself; a poll answers the live state.
+      return { t: "status", id: cmd.id, playing: session !== null, position: session?.positionBase ?? 0, ended: false };
   }
 }
 

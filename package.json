@@ -14,6 +14,7 @@
     "serve:3ds": "bun host/companion.ts",
     "deploy:3ds": "python3 scripts/deploy-3ds.py",
     "serve": "bun host/serve.ts",
+    "serve:psp": "bun host/companion-usb.ts --dir dist/psplink",
     "serve:vita": "bun host/serve.ts --tcp",
     "serve:proxy": "bun host/serve.ts --tcp --proxy http://127.0.0.1:7897",
     "test": "bun test test/host.test.ts test/tcp.test.ts test/media.test.ts && bun test --conditions=browser test/sim.test.ts",

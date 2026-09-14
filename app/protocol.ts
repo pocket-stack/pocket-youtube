@@ -20,7 +20,10 @@ export type DeviceCmd =
   | { t: "pause"; id: number }
   | { t: "resume"; id: number }
   | { t: "seek"; id: number; to: number }
-  | { t: "stop"; id: number };
+  | { t: "stop"; id: number }
+  /** Companion transport without native media (PSP ring): the app polls
+   *  the ring session's state instead of receiving a pushed `ended`. */
+  | { t: "status"; id: number };
 
 export interface ResultItem {
   videoId: string;
@@ -58,6 +61,7 @@ export type HostMsg =
       hasCaptions?: boolean;
     }
   | { t: "state"; id: number; playing: boolean; position: number }
+  | { t: "status"; id: number; playing: boolean; position: number; ended: boolean }
   | { t: "ended" }
   | { t: "offline" }
   | { t: "playback-error"; stream: string; message: string }

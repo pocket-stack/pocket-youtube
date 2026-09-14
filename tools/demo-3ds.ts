@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
-import { searchKeys } from "../app/search-keyboard-layout.ts";
+import { oskKeyCenter } from "../vendor/pocketjs/tests/osk-script.ts";
+import { oskMetrics } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 const source = "https://media.w3.org/2010/05/bunny/trailer.mp4";
@@ -88,6 +89,9 @@ globals.offload = {
 };
 globals.media = {
   open: () => { playing = true; paused = false; return true; }, close: () => { playing = false; },
+  // The SD library is idle for the recording: no saved entries, no transfer.
+  library: () => null, refreshLibrary: () => true, caption: () => null,
+  downloadStatus: () => JSON.stringify({ phase: "idle", receivedBytes: 0, totalBytes: 0, error: "" }),
   paused: (value: boolean) => { paused = value; }, volume() {}, texture: () => texture,
   status: () => JSON.stringify({ phase: playing ? paused ? "paused" : "playing" : "idle", positionMs: Math.round(position * 1000),
     bufferedMs: 300, decodedFrames: playing ? 1 : 0, presentedFrames: playing ? 1 : 0,
@@ -134,11 +138,12 @@ function drag(x: number, from: number, to: number, ticks = 36) {
 }
 function record(name: string) { recording = name; recorded = 0; mkdirSync(`${cache}/${name}`, { recursive: true }); }
 function finish() { counts[recording] = recorded; recording = ""; }
-step(30); record("3ds-search"); step(90); tap(110, 170); step(30);
-for (const ch of "bunny") {
-  const key = searchKeys("lower").find(key => key.ch === ch)!; tap(key.x + key.w / 2, key.y + 15); step(8);
-}
-step(35); tap(280, 218); step(150);
+step(30); record("3ds-search"); step(90); tap(110, 120); step(30);
+// The framework keyboard on the 320x240 bottom screen: staggered rows under
+// the classic legend strip, docked at the bottom.
+const keyAt = (label: string) => oskKeyCenter("staggered", "lower", label, { w: 320, h: 240 }, oskMetrics("staggered", 30, 14));
+for (const ch of "bunny") { const [x, y] = keyAt(ch); tap(x, y); step(8); }
+step(35); { const [x, y] = keyAt("✓"); tap(x, y); } step(150);
 drag(170, 195, 85, 45); drag(170, 195, 85, 45); step(65);
 drag(170, 85, 198, 35); drag(170, 85, 198, 35); step(65); finish();
 // Return to the first row before recording the independent controls.

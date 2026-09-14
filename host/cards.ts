@@ -20,15 +20,21 @@ import { existsSync } from "node:fs";
 import { parse as parseFont, type Font } from "opentype.js";
 
 export const CARD_W = 512;
-/** On-screen width — the pow2 tail beyond this is clipped by the app. */
-export const CARD_VISIBLE_W = 456;
+/** On-screen width — the pow2 tail beyond this is clipped by the app. Rows
+ *  run flush with the 480 px screen, like the 3DS list. */
+export const CARD_VISIBLE_W = 480;
 export const CARD_H = 64;
 export const THUMB_W = 116;
 export const THUMB_H = 64;
 
-const BG = [0x14, 0x1c, 0x26];
-const INK = [0xe8, 0xf0, 0xf2];
-const DIM = [0x8f, 0xa3, 0xad];
+// The classic light row: white paper, body ink, secondary ink — the same
+// tokens the device chrome takes from @pocketjs/framework/classic.
+const BG = [0xf7, 0xf8, 0xfa];
+const INK = [0x28, 0x34, 0x44];
+const DIM = [0x66, 0x74, 0x85];
+const ROW_LINE = [0xcc, 0xd0, 0xd6];
+const BADGE_INK = [0xff, 0xff, 0xff];
+const THUMB_FALLBACK = [0xb0, 0xb9, 0xc5];
 
 const FONT_CANDIDATES = [
   "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -222,8 +228,16 @@ export function fitLines(text: string, size: number, maxWidth: number, maxLines:
       lines.push(line + "…");
       return lines;
     }
+    // Break at the last space when a word is in progress and the carried
+    // word fits a line of its own; text without spaces (CJK) breaks by character.
+    let carry = chars[i] === " " ? "" : chars[i];
+    const cut = carry ? line.lastIndexOf(" ") : -1;
+    if (cut > 0 && textWidth(line.slice(cut + 1) + carry, size) <= maxWidth) {
+      carry = line.slice(cut + 1) + carry;
+      line = line.slice(0, cut);
+    }
     lines.push(line);
-    line = chars[i] === " " ? "" : chars[i];
+    line = carry;
   }
   if (line) lines.push(line);
   return lines;
@@ -309,8 +323,8 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
   } else {
     // Placeholder: a dimmer panel with a play glyph, so a failed thumbnail
     // fetch still reads as "a video".
-    fillRect(rgba, W, H, 0, 0, tw2, th2, [0x1e, 0x2a, 0x38]);
-    drawText(rgba, W, H, "▶", (tw2 - textWidth("▶", 22 * s)) / 2, 40 * s, 22 * s, DIM);
+    fillRect(rgba, W, H, 0, 0, tw2, th2, THUMB_FALLBACK);
+    drawText(rgba, W, H, "▶", (tw2 - textWidth("▶", 22 * s)) / 2, 40 * s, 22 * s, BADGE_INK);
   }
   // Duration badge on the thumbnail, bottom-right (the mockup chip).
   if (input.durationS > 0) {
@@ -318,10 +332,12 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
     const tw = Math.ceil(textWidth(label, 10 * s));
     const bx = tw2 - tw - 10 * s;
     fillRect(rgba, W, H, bx, th2 - 16 * s, tw + 8 * s, 13 * s, [0, 0, 0], 0.72);
-    drawText(rgba, W, H, label, bx + 4 * s, th2 - 6 * s, 10 * s, INK);
+    drawText(rgba, W, H, label, bx + 4 * s, th2 - 6 * s, 10 * s, BADGE_INK);
   }
+  // The row's bottom rule, under the text column only (the thumb runs full height).
+  fillRect(rgba, W, H, tw2, H - s, CARD_VISIBLE_W * s - tw2, s, ROW_LINE);
   const tx = tw2 + 10 * s;
-  const maxW = CARD_VISIBLE_W * s - tx - 26 * s; // keep clear of the chevron
+  const maxW = CARD_VISIBLE_W * s - tx - 12 * s;
   const lines = fitLines(input.title, 14 * s, maxW, 2);
   const views = input.views > 0 ? `${fmtViews(input.views)} views` : "";
   if (lines.length > 1) {
@@ -336,8 +352,6 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
     drawText(rgba, W, H, fitLines(input.channel, 10 * s, maxW, 1)[0] ?? "", tx, 39 * s, 10 * s, DIM);
     drawText(rgba, W, H, views, tx, 55 * s, 10 * s, DIM);
   }
-  drawText(rgba, W, H, "›", (CARD_VISIBLE_W - 18) * s, 39 * s, 16 * s, DIM);
-  roundCorners(rgba, s);
   return rgba;
 }
 
@@ -388,38 +402,6 @@ export function downscale2(rgba: Uint8Array, w2: number, h2: number): Uint8Array
   return out;
 }
 
-/** App background behind the rows — corner masking must match it. */
-const PAGE_BG = [0x0b, 0x0f, 0x14];
-/** Row corner radius; keep in sync with the app's rounded-md (6px). */
-const CORNER_R = 6;
-
-/**
- * Round the visible row's corners in pixels: the device clips with a
- * RECTANGULAR scissor, so a rounded focus ring shows the texture's square
- * corners poking past its arc. Painting the corners with the page
- * background (antialiased against the true distance) is equivalent to a
- * rounded clip because rows always sit on that background.
- */
-function roundCorners(rgba: Uint8Array, s = 1): void {
-  // Rounded-rect SDF over the visible area (pixel centers at +0.5): the
-  // blend factor is the coverage OUTSIDE the pill, antialiased over 1px.
-  const hw = (CARD_VISIBLE_W * s) / 2 - CORNER_R * s;
-  const hh = (CARD_H * s) / 2 - CORNER_R * s;
-  for (let y = 0; y < CARD_H * s; y++) {
-    const qy = Math.abs(y + 0.5 - (CARD_H * s) / 2) - hh;
-    if (qy <= 0) continue; // inside the vertical straight band — never clipped
-    for (let x = 0; x < CARD_VISIBLE_W * s; x++) {
-      const qx = Math.abs(x + 0.5 - (CARD_VISIBLE_W * s) / 2) - hw;
-      if (qx <= 0) continue;
-      const a = Math.min(1, Math.max(0, Math.hypot(qx, qy) - CORNER_R * s + 0.5));
-      if (a <= 0) continue;
-      const o = (y * CARD_W * s + x) * 4;
-      rgba[o] = rgba[o] + (PAGE_BG[0] - rgba[o]) * a;
-      rgba[o + 1] = rgba[o + 1] + (PAGE_BG[1] - rgba[o + 1]) * a;
-      rgba[o + 2] = rgba[o + 2] + (PAGE_BG[2] - rgba[o + 2]) * a;
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Thumbnail fetch + decode (ffmpeg scale/crop; no freetype needed here)

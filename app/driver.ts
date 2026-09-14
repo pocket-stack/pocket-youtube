@@ -27,6 +27,9 @@ const HTTP_BASE = "http://127.0.0.1:8620";
 export type Transport = "usb" | "http" | "companion" | "none";
 
 let transport: Transport | null = null;
+/** Whether the svc dir for side files (cards, ring) is open on this host. */
+let sideFiles = false;
+export function sideFilesOpen(): boolean { return sideFiles; }
 const pending = new Map<number, (msg: HostMsg) => void>();
 let pushHandler: ((msg: HostMsg) => void) | null = null;
 let httpEventCursor = 0;
@@ -103,7 +106,16 @@ export function installYoutubeDriver(): void {
 /** Once-per-frame pump: drain svc lines (usb), poll pushes (http), and feed
  *  the card loader. The app root calls this from onFrame. */
 export function pumpDriver(): void {
-  if (hasFeature("io.offload")) { pumpCompanion(); return; }
+  if (hasFeature("io.offload")) {
+    pumpCompanion();
+    // Companion over USB (PSP): search and artwork replies ride offload
+    // records, but a 512×64 card and the video ring are side files under
+    // the svc dir — open it so loadImgFile/videoOpen resolve host0:. The
+    // companion may start after the app, so the probe repeats every half
+    // second until it succeeds (one file open per probe).
+    if (!sideFiles && frameCounter++ % 30 === 0) sideFiles = ops().svcOpen?.("youtube") ?? false;
+    return;
+  }
   frameCounter++;
   // Each svcPoll is a few usbhostfs round trips — every 5th frame keeps the
   // idle USB chatter down (same reasoning as the DevTools shim's 10) while

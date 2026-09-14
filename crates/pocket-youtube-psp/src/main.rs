@@ -130,6 +130,10 @@ unsafe fn run() {
         // Analog nub packed (x << 8) | y, each axis 0..255 with 128 = center
         // (spec.ts "frame(buttons, analog)"; SceCtrlData names the axes lx/ly).
         let analog = (((pad.lx as u32) << 8) | pad.ly as u32) as i32;
+        // The offload worker paces submissions per frame (one record per
+        // frame) and folds pad state into its stats; without this tick its
+        // frame counter stays at zero and every submit is refused.
+        pocketjs_psp::offload::frame(mask as u32, analog as u32);
 
         let mut args = [JS_NewInt32(ctx, mask), JS_NewInt32(ctx, analog)];
         let r = JS_Call(ctx, frame_fn, global, 2, args.as_mut_ptr());

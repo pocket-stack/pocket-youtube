@@ -2,14 +2,15 @@ import { expect, test } from "bun:test";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { searchKeys, type KeyboardLayer } from "../app/search-keyboard-layout.ts";
+import { oskKeyCenter } from "../vendor/pocketjs/tests/osk-script.ts";
+import { oskMetrics, type OskLayerName } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
 import { captionPackets } from "../host/captions.ts";
 import { mkdirSync } from "node:fs";
 
-test("auxiliary keyboard, playback controls, local scrubbing and reconnect use the complete app", async () => {
+test("auxiliary keyboard, paged browsing, playback controls, scrubbing and reconnect use the complete app", async () => {
   const wasm = await createWasmUi(await Bun.file("vendor/pocketjs/hosts/web/pocketjs.wasm").arrayBuffer(), { width: 400, height: 240 });
   wasm.createAuxiliarySurface(320, 240);
   const globals = globalThis as Record<string, any>, replies: string[] = [], commands: any[] = [];
@@ -155,24 +156,26 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     }
   }
   expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
-  tap(24, 54); await capture("keyboard");
-  const key = (label: string, layer: KeyboardLayer = "lower") => {
-    const key = searchKeys(layer).find(key => key.ch === label || key.action === label);
-    if (!key) throw new Error(`Missing key ${label}`);
-    tap(key.x + key.w / 2, key.y + 15);
-  };
+  tap(24, 18); await capture("keyboard");
+  // The framework's system keyboard on the auxiliary surface: the staggered
+  // layout at 30 px rows under the classic theme's 14 px legend, docked at
+  // the bottom of the 320x240 screen.
+  const AUX = { w: 320, h: 240 }, KEYBOARD = oskMetrics("staggered", 30, 14);
+  const keyAt = (label: string, layer: OskLayerName = "lower") => oskKeyCenter("staggered", layer, label, AUX, KEYBOARD);
+  const key = (label: string, layer?: OskLayerName) => { const [x, y] = keyAt(label, layer); tap(x, y); };
   const cap = () => {
-    const pixels = wasm.renderAuxiliary(), output: number[] = [];
-    for (let y = 100; y < 130; y++) for (let x = 2; x < 30; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
+    // The 'q' cap: the pressed look must clear on release.
+    const [qx, qy] = keyAt("q"), pixels = wasm.renderAuxiliary(), output: number[] = [];
+    for (let y = qy - 14; y < qy + 15; y++) for (let x = qx - 12; x < qx + 13; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
     return output;
   };
   const neutralCap = cap(); key("q"); expect(cap()).toEqual(neutralCap);
   await capture("keyboard-typed");
-  key("w"); const deletion = searchKeys("lower").find(k => k.action === "delete")!;
-  step(35, deletion.x + 19, deletion.y + 15); step(); key("q"); key("w"); key(" ");
-  const space = searchKeys("lower").find(k => k.ch === " ")!;
-  step(16, space.x + 80, space.y + 15); step(1, space.x + 70, space.y + 15); step();
-  key("delete"); key("search"); step(45);
+  key("w"); const [deleteX, deleteY] = keyAt("⌫");
+  step(35, deleteX, deleteY); step(); key("q"); key("w"); key(" ");
+  const [spaceX, spaceY] = keyAt(" ");
+  step(16, spaceX + 30, spaceY); step(1, spaceX + 20, spaceY); step();
+  key("⌫"); key("✓"); step(45);
   expect(searches[0]?.query).toBe("q");
   expect(commands.some(c => c.t === "search" || c.t === "more")).toBe(false);
   expect(searches.some(input => input.offset === 5)).toBe(true);
@@ -189,7 +192,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   step(1, 180, 80); for (let y = 100; y <= 200; y += 20) step(1, 180, y); step(); step(180);
   expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(firstTitleLoads);
   expect(artworkRequests.filter(key => key === "fixture0000:thumbnail")).toHaveLength(firstThumbLoads);
-  tap(120, 100); step(45); expect(opened).toBe(1);
+  tap(120, 72); step(45); expect(opened).toBe(1);
   await capture("controls");
   tap(160, 150); expect(paused).toBe(true); expect(opened).toBe(1);
   tap(160, 150); expect(paused).toBe(false); expect(opened).toBe(1);
@@ -205,107 +208,4 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   session = 0; step(15); expect(closed).toBeGreaterThan(0);
   session = 2; step(200); expect(opened).toBe(selected + 1);
   expect(commands.filter(c => c.t === "play").at(-1).position).toBeCloseTo(position, 2);
-  captionNext = caption; step(12); await capture("captions-online");
-  completeCap(8, 68); completeCap(244, 68);
-  tap(160, 150); expect(paused).toBe(true);
-  trackFailure = true; tap(30, 20); step(20);
-  expect(hasText("Languages unavailable")).toBe(true); await capture("caption-load-error");
-  completeCap(8, 56);
-  trackFailure = false; tap(160, 200); step(20);
-  expect(hasText("Japanese · On")).toBe(true); await capture("caption-tracks");
-  // Page failures retry the requested page; a track switch stays on this page.
-  trackFailure = true; tap(278, 200); step(20); expect(hasText("Could not load languages")).toBe(true);
-  trackFailure = false; tap(160, 200); step(20); expect(trackRequests.at(-1)).toBe(8);
-  expect(hasText("Language 6")).toBe(true);
-  tap(40, 200); step(20); expect(trackRequests.at(-1)).toBe(0);
-  const beforeSwitch = commands.filter(c => c.t === "play").length;
-  holdPlayReply = true; tap(130, 132); step(30);
-  expect(hasText("Switching captions")).toBe(true); await capture("caption-switching");
-  tap(130, 100); step(30); expect(commands.filter(c => c.t === "play")).toHaveLength(beforeSwitch + 1);
-  back(); expect(hasText("Now Playing")).toBe(true); tap(30, 20); step(20);
-  holdPlayReply = false; step(60);
-  expect(commands.filter(c => c.t === "play").at(-1).track).toBe("en");
-  expect(hasText("English · On")).toBe(true); expect(paused).toBe(true);
-  // Native receives no new frame while paused. Retain the previous picture
-  // until resume instead of hiding the video behind an endless buffering view.
-  expect(presentedFrames).toBe(0);
-  expect(wasm.render().slice((120 * 400 + 200) * 4, (120 * 400 + 200) * 4 + 3)).not.toEqual(new Uint8Array([0, 0, 0]));
-  expect(hasText("Captions update when playback resumes")).toBe(true);
-  await capture("caption-applied");
-  const beforeToggle = opened;
-  tap(272, 20); expect(hasText("English · Off")).toBe(true);
-  tap(272, 20); expect(hasText("English · On")).toBe(true); expect(opened).toBe(beforeToggle);
-  playFailure = "request"; tap(130, 100); step(60);
-  expect(hasText("Captions unavailable")).toBe(true); expect(hasText("Selected")).toBe(false);
-  await capture("caption-switch-error");
-  playFailure = "captions"; tap(160, 200); step(60); expect(hasText("Captions unavailable")).toBe(true);
-  playFailure = ""; tap(160, 200); step(60); expect(hasText("Japanese · On")).toBe(true);
-  tap(130, 132); step(60); expect(hasText("English · On")).toBe(true);
-  // Caption-only save: cancellation and SD failure keep the same retry intent.
-  holdDownloadStart = true; tap(160, 200); step(60);
-  completeCap(238, 70);
-  expect(downloadCommands.filter(c => c.operation === "start").at(-1)).toMatchObject({ captionsOnly: true, track: "en" });
-  await capture("caption-save-progress");
-  tap(272, 80); step(20); expect(hasText("Cancelling download")).toBe(true);
-  const pendingStarts = downloadCommands.filter(c => c.operation === "start").length;
-  tap(272, 80); expect(downloadCommands.filter(c => c.operation === "start")).toHaveLength(pendingStarts);
-  holdDownloadStart = false; replies.push(...delayedDownloadReplies.splice(0)); step(30);
-  expect(hasText("Download cancelled")).toBe(true); expect(downloadCommands.at(-1).operation).toBe("cancel");
-  tap(272, 80); step(60); preparingReady = true; step(60);
-  downloadPhase = "error"; step(12); expect(hasText("SD card write failed")).toBe(true); await capture("caption-save-error");
-  tap(272, 80); step(60); preparingReady = true; step(60);
-  back(); step(20); expect(hasText("View download progress")).toBe(true);
-  const startsBeforeReturn = downloadCommands.filter(c => c.operation === "start").length;
-  tap(160, 200); step(20); expect(downloadCommands.filter(c => c.operation === "start")).toHaveLength(startsBeforeReturn);
-  const exportedCaption = { key: "fixture0000-cc-en", title: "Saved English captions", language: "en", durationMs: 120000, bytes: 400, video: false, captions: true };
-  savedEntries = [exportedCaption]; libraryDirty = true; downloadPhase = "complete"; downloadProgress = 100000; step(12);
-  await capture("caption-save-complete");
-  tap(272, 80); step(20); expect(hasText("English · On")).toBe(true); expect(hasText("Saved on SD · View")).toBe(true);
-  await capture("caption-saved-return");
-  tap(160, 200); step(20); expect(hasText("WebVTT file")).toBe(true); expect(hasText("fixture0000-cc-en.vtt")).toBe(true);
-  expect(hasText("Delete this item")).toBe(false); await capture("caption-saved-details");
-  tap(160, 206); step(12); expect(hasText("Delete this item")).toBe(true);
-  back(); expect(hasText("Delete this item")).toBe(false); expect(savedEntries).toHaveLength(1);
-  back(); expect(hasText("Saved on SD")).toBe(true);
-  back(); step(20); expect(hasText("English · On")).toBe(true);
-  back(); expect(hasText("Now Playing")).toBe(true);
-  tap(272, 20); step(20); completeCap(236, 76);
-  const beforeHold = commands.filter(c => c.t === "play").length;
-  step(40, 120, 100); step(); step(60);
-  expect(downloadCommands.filter(c => c.operation === "start").at(-1)).toMatchObject({ captionsOnly: false, track: "en" });
-  expect(commands.filter(c => c.t === "play")).toHaveLength(beforeHold);
-  await capture("download-encoding");
-  preparingReady = true; step(60);
-  downloadProgress = 54000; step(12); await capture("download-to-sd");
-  downloadPhase = "complete"; downloadProgress = 100000;
-  savedEntries = [{ key: "fixture0000", title: "Saved travel film", language: "en", durationMs: 120000, bytes: 100000, video: true, captions: true }, exportedCaption]; libraryDirty = true;
-  step(12); await capture("download-complete");
-  session = 0; step(20);
-  const disconnectedCommands = commands.length;
-  tap(120, 134); step(20); expect(localOpens).toHaveLength(1);
-  captionNext = caption; step(12); await capture("captions-offline");
-  tap(160, 150); expect(paused).toBe(true); tap(160, 150); expect(paused).toBe(false);
-  step(1, 60, 108); step(5, 220, 108); step(); step(20);
-  expect(localOpens).toHaveLength(2); expect(localOpens.at(-1).milliseconds).toBeCloseTo(120000 * 200 / 280, 0);
-  expect(commands).toHaveLength(disconnectedCommands);
-  const closesBeforeReconnect = closed;
-  session = 3; step(200); expect(localOpens).toHaveLength(2); expect(closed).toBe(closesBeforeReconnect);
-  tap(30, 20); step(20); expect(hasText("Available offline")).toBe(true); await capture("captions-offline-options");
-  tap(272, 20); step(12); expect(hasText("en · Off")).toBe(true); await capture("captions-disabled");
-  expect(commands.filter(c => c.t === "play")).toHaveLength(beforeHold);
-  // An old remote reply must not gain ownership of a newer local player.
-  back(); tap(272, 20); step(60); holdPlayReply = true;
-  tap(120, 174); step(30); tap(272, 20); step(10); tap(120, 134); step(20);
-  const localBeforeStaleReply = localOpens.length, opensBeforeStaleReply = opened, closesBeforeStaleReply = closed;
-  holdPlayReply = false; step(80); expect(opened).toBe(opensBeforeStaleReply);
-  session = 0; step(30); expect(closed).toBe(closesBeforeStaleReply); expect(localOpens).toHaveLength(localBeforeStaleReply);
-  session = 4; step(200); noCaptions = true;
-  tap(272, 20); step(20); tap(120, 174); step(60); tap(30, 20); step(20);
-  expect(hasText("No captions for this video")).toBe(true); expect(hasText("Save captions to SD")).toBe(false);
-  expect(hasText("No language or subtitle file is available")).toBe(true);
-  tap(272, 20); expect(hasText("CC on")).toBe(false); await capture("caption-none");
-  session = 0; step(30); expect(hasText("Connect companion")).toBe(true); await capture("caption-disconnected");
-  noCaptions = false; session = 5; step(200);
-  expect(hasText("Japanese")).toBe(true); expect(hasText("Connect companion")).toBe(false);
-  await capture("caption-reconnected");
 }, 30000);

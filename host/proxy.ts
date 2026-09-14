@@ -16,8 +16,12 @@ function cliFlag(name: string): string | undefined {
   return undefined;
 }
 
+// Shells export the lowercase spellings (Clash, curl, yt-dlp read them);
+// ffmpeg reads neither, so the resolved value must reach it as a flag.
 export const proxyUrl: string | null =
-  cliFlag("--proxy") ?? process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? null;
+  cliFlag("--proxy") ??
+  process.env.HTTPS_PROXY ?? process.env.https_proxy ??
+  process.env.HTTP_PROXY ?? process.env.http_proxy ?? null;
 
 /** yt-dlp: an explicit flag beats env-var ambiguity. */
 export function ytDlpProxyArgs(): string[] {
